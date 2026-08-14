@@ -19,6 +19,7 @@ import 'group_info_screen.dart';
 import '../widgets/adaptive_image_bubble.dart';
 import '../widgets/voice_recording_bar.dart';
 import '../widgets/voice_message_bubble.dart';
+import '../services/voice_note_service.dart';
 
 class Sticker {
   final String id;
@@ -144,7 +145,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   bool _initialScrollDone = false;
   Message? _replyingToMessage;
   Message? _editingMessage;
-  bool _isRecordingVoice = false;
+  bool _isVoiceHolding = false;
+  bool _isVoiceLocked = false;
+  double _voiceDragX = 0.0;
+  double _voiceDragY = 0.0;
+  int _voiceDuration = 0;
+  StreamSubscription<int>? _voiceDurationSub;
   
   Future<void> _showStickerOptionsSheet(Message msg) async {
     if (msg.mediaUrl == null) return;
@@ -270,6 +276,17 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _markConversationAsRead();
   }
 
+  @override
+  void dispose() {
+    _voiceDurationSub?.cancel();
+    _sub?.cancel();
+    _uiStreamController.close();
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
   void _markConversationAsRead() {
     final chatId = isGroup ? widget.groupId! : _chatService.getChatId(_chatService.currentUserId, widget.recipientId ?? '');
     LocalDatabaseService().markMessagesAsRead(chatId);
@@ -295,16 +312,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     if (!_uiStreamController.isClosed) {
       _uiStreamController.add(localMsgs);
     }
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    _uiStreamController.close();
-    _focusNode.removeListener(_onFocusChange);
-    _focusNode.dispose();
-    _messageController.dispose();
-    super.dispose();
   }
 
   void _onFocusChange() {
@@ -1042,17 +1049,84 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     );
   }
 
+  void _startVoiceHold() async {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _isVoiceHolding = true;
+      _isVoiceLocked = false;
+      _voiceDragX = 0.0;
+      _voiceDragY = 0.0;
+      _voiceDuration = 0;
+    });
+
+    _voiceDurationSub?.cancel();
+    _voiceDurationSub = VoiceNoteService().durationStream.listen((d) {
+      if (mounted) setState(() => _voiceDuration = d);
+    });
+
+    final ok = await VoiceNoteService().startRecording();
+    if (!ok && mounted) {
+      _cancelVoiceHold();
+    }
+  }
+
+  void _cancelVoiceHold() async {
+    HapticFeedback.mediumImpact();
+    _voiceDurationSub?.cancel();
+    await VoiceNoteService().cancelRecording();
+    if (mounted) {
+      setState(() {
+        _isVoiceHolding = false;
+        _isVoiceLocked = false;
+        _voiceDragX = 0.0;
+        _voiceDragY = 0.0;
+      });
+    }
+  }
+
+  void _lockVoice() {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _isVoiceHolding = false;
+      _isVoiceLocked = true;
+      _voiceDragX = 0.0;
+      _voiceDragY = 0.0;
+    });
+  }
+
+  void _finishAndSendVoiceHold() async {
+    HapticFeedback.mediumImpact();
+    _voiceDurationSub?.cancel();
+    final result = await VoiceNoteService().stopRecording();
+    final path = result?['path'];
+    final dur = result?['duration'] ?? _voiceDuration;
+
+    if (mounted) {
+      setState(() {
+        _isVoiceHolding = false;
+        _isVoiceLocked = false;
+        _voiceDragX = 0.0;
+        _voiceDragY = 0.0;
+      });
+    }
+
+    if (path != null && path.isNotEmpty) {
+      _sendVoiceNote(path, dur > 0 ? dur : 1);
+    }
+  }
+
   Widget _buildInputBar() {
-    if (_isRecordingVoice) {
+    if (_isVoiceLocked) {
       return VoiceRecordingBar(
+        initialMode: RecordingMode.locked,
         onCancel: () {
           setState(() {
-            _isRecordingVoice = false;
+            _isVoiceLocked = false;
           });
         },
         onSend: (audioPath, durationSeconds) {
           setState(() {
-            _isRecordingVoice = false;
+            _isVoiceLocked = false;
           });
           _sendVoiceNote(audioPath, durationSeconds);
         },
@@ -1062,117 +1136,214 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final hasText = _messageController.text.trim().isNotEmpty;
     final isEditing = _editingMessage != null;
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
-      color: Colors.transparent,
-      child: SafeArea(
-        bottom: !_isPickerVisible,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+    final cancelTranslate = (_voiceDragX < 0 ? _voiceDragX : 0.0).clamp(-120.0, 0.0);
+    final opacityCancel = (1.0 - (cancelTranslate.abs() / 120.0)).clamp(0.0, 1.0);
+
+    return SafeArea(
+      top: false,
+      bottom: !_isPickerVisible,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(6, 4, 6, 8),
+        color: Colors.transparent,
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            // Left Pill Capsule (Emoji + TextField + Paperclip + Camera)
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F2428),
-                  borderRadius: BorderRadius.circular(26),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Emoji / Keyboard toggle
-                    IconButton(
-                      icon: Icon(
-                        _isPickerVisible ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined,
-                        color: const Color(0xFF8696A0),
-                        size: 24,
-                      ),
-                      splashRadius: 20,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-                      onPressed: _togglePicker,
-                    ),
-
-                    // Message text input
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        focusNode: _focusNode,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
-                        cursorColor: const Color(0xFFFF2E74),
-                        maxLines: 5,
-                        minLines: 1,
-                        decoration: InputDecoration(
-                          hintText: isEditing ? 'Editando mensaje...' : 'Mensaje',
-                          hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 16),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
-                        ),
-                      ),
-                    ),
-
-                    // Attachment paperclip
-                    IconButton(
-                      icon: const Icon(Icons.attach_file_rounded, color: Color(0xFF8696A0), size: 24),
-                      splashRadius: 20,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
-                      onPressed: _showAttachmentMenu,
-                    ),
-
-                    // Camera icon
-                    IconButton(
-                      icon: const Icon(Icons.camera_alt_rounded, color: Color(0xFF8696A0), size: 22),
-                      splashRadius: 20,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
-                      onPressed: () => _sendImage(source: ImageSource.camera),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 6),
-
-            // Right Neon Pink Circular Button (Mic / Send / Check)
-            GestureDetector(
-              onTap: () {
-                if (hasText || isEditing) {
-                  _sendMessage();
-                } else {
-                  setState(() {
-                    _isRecordingVoice = true;
-                  });
-                }
-              },
-              onLongPress: () {
-                if (!hasText && !isEditing) {
-                  setState(() {
-                    _isRecordingVoice = true;
-                  });
-                }
-              },
-              child: Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(0xFFFF2E74),
-                ),
-                child: Center(
-                  child: Icon(
-                    isEditing
-                        ? Icons.check_rounded
-                        : (hasText ? Icons.send_rounded : Icons.mic_rounded),
-                    color: Colors.white,
-                    size: isEditing ? 24 : (hasText ? 22 : 24),
+            // Lock Indicator Capsule above microphone when holding
+            if (_isVoiceHolding)
+              Positioned(
+                right: 8,
+                bottom: 66,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E2428),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 4)),
+                    ],
+                  ),
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lock_rounded, color: Colors.white70, size: 20),
+                      SizedBox(height: 4),
+                      Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white54, size: 18),
+                    ],
                   ),
                 ),
               ),
+
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Left Pill Capsule (when holding: shows live timer + slide to cancel hint)
+                Expanded(
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1F2428),
+                      borderRadius: BorderRadius.circular(26),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: _isVoiceHolding
+                        ? Row(
+                            children: [
+                              const Icon(Icons.mic_rounded, color: Color(0xFFFF1744), size: 22),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${(_voiceDuration ~/ 60)}:${(_voiceDuration % 60).toString().padLeft(2, '0')}',
+                                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                              const Spacer(),
+                              Opacity(
+                                opacity: opacityCancel,
+                                child: Transform.translate(
+                                  offset: Offset(cancelTranslate, 0),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.chevron_left_rounded, color: Colors.white54, size: 18),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'Desliza para cancelar',
+                                        style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.w500),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // Emoji / Keyboard toggle
+                              IconButton(
+                                icon: Icon(
+                                  _isPickerVisible ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined,
+                                  color: const Color(0xFF8696A0),
+                                  size: 24,
+                                ),
+                                splashRadius: 20,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                                onPressed: _togglePicker,
+                              ),
+
+                              // Message text input
+                              Expanded(
+                                child: TextField(
+                                  controller: _messageController,
+                                  focusNode: _focusNode,
+                                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                                  cursorColor: const Color(0xFFFF2E74),
+                                  maxLines: 5,
+                                  minLines: 1,
+                                  decoration: InputDecoration(
+                                    hintText: isEditing ? 'Editando mensaje...' : 'Mensaje',
+                                    hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 16),
+                                    border: InputBorder.none,
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+                                  ),
+                                ),
+                              ),
+
+                              // Attachment paperclip
+                              IconButton(
+                                icon: const Icon(Icons.attach_file_rounded, color: Color(0xFF8696A0), size: 24),
+                                splashRadius: 20,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
+                                onPressed: _showAttachmentMenu,
+                              ),
+
+                              // Camera icon
+                              IconButton(
+                                icon: const Icon(Icons.camera_alt_rounded, color: Color(0xFF8696A0), size: 22),
+                                splashRadius: 20,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
+                                onPressed: () => _sendImage(source: ImageSource.camera),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+
+                const SizedBox(width: 6),
+
+                // Right Neon Pink Circular Button (Mic / Send / Check)
+                GestureDetector(
+                  onTap: () {
+                    if (hasText || isEditing) {
+                      _sendMessage();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          backgroundColor: Color(0xFF1E1E1E),
+                          duration: Duration(milliseconds: 1500),
+                          behavior: SnackBarBehavior.floating,
+                          content: Text('Mantén presionado para grabar un audio 🎙️', style: TextStyle(color: Colors.white)),
+                        ),
+                      );
+                    }
+                  },
+                  onLongPressStart: (details) {
+                    if (!hasText && !isEditing) {
+                      _startVoiceHold();
+                    }
+                  },
+                  onLongPressMoveUpdate: (details) {
+                    if (_isVoiceHolding) {
+                      final dx = details.offsetFromOrigin.dx;
+                      final dy = details.offsetFromOrigin.dy;
+                      setState(() {
+                        _voiceDragX = dx;
+                        _voiceDragY = dy;
+                      });
+
+                      if (dx < -75) {
+                        _cancelVoiceHold();
+                      } else if (dy < -55) {
+                        _lockVoice();
+                      }
+                    }
+                  },
+                  onLongPressEnd: (details) {
+                    if (_isVoiceHolding) {
+                      _finishAndSendVoiceHold();
+                    }
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: _isVoiceHolding ? 54 : 48,
+                    height: _isVoiceHolding ? 54 : 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFFF2E74),
+                      boxShadow: _isVoiceHolding
+                          ? [
+                              BoxShadow(
+                                color: const Color(0xFFFF2E74).withOpacity(0.5),
+                                blurRadius: 14,
+                                spreadRadius: 2,
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Center(
+                      child: Icon(
+                        isEditing
+                            ? Icons.check_rounded
+                            : (hasText ? Icons.send_rounded : Icons.mic_rounded),
+                        color: Colors.white,
+                        size: isEditing ? 24 : (hasText ? 22 : 26),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

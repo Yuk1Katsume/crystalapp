@@ -10,11 +10,13 @@ enum RecordingMode {
 }
 
 class VoiceRecordingBar extends StatefulWidget {
+  final RecordingMode initialMode;
   final VoidCallback onCancel;
   final Function(String audioPath, int durationSeconds) onSend;
 
   const VoiceRecordingBar({
     super.key,
+    this.initialMode = RecordingMode.holding,
     required this.onCancel,
     required this.onSend,
   });
@@ -25,7 +27,7 @@ class VoiceRecordingBar extends StatefulWidget {
 
 class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTickerProviderStateMixin {
   final VoiceNoteService _voiceService = VoiceNoteService();
-  RecordingMode _mode = RecordingMode.holding;
+  late RecordingMode _mode;
 
   int _duration = 0;
   StreamSubscription<int>? _durationSub;
@@ -51,6 +53,8 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
   @override
   void initState() {
     super.initState();
+    _mode = widget.initialMode;
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -85,7 +89,9 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
       }
     });
 
-    _startInitialRecording();
+    if (_mode == RecordingMode.holding) {
+      _startInitialRecording();
+    }
   }
 
   void _startInitialRecording() async {
@@ -161,7 +167,6 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
 
   void _togglePreviewPlay() async {
     if (_stoppedAudioPath == null) {
-      // Need current audio path
       final res = await _voiceService.stopRecording();
       if (res != null) {
         _stoppedAudioPath = res['path'];
@@ -182,13 +187,16 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
 
   @override
   Widget build(BuildContext context) {
-    if (_mode == RecordingMode.holding) {
-      return _buildHoldingView();
-    } else if (_mode == RecordingMode.locked) {
-      return _buildLockedView();
-    } else {
-      return _buildPausedPreviewView();
-    }
+    return SafeArea(
+      top: false,
+      bottom: true,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: _mode == RecordingMode.holding
+            ? _buildHoldingView()
+            : (_mode == RecordingMode.locked ? _buildLockedView() : _buildPausedPreviewView()),
+      ),
+    );
   }
 
   // --- STATE 1: HOLD TO RECORD ---
@@ -201,10 +209,10 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
       children: [
         // Lock Indicator Capsule above microphone
         Positioned(
-          right: 4,
-          bottom: 72,
+          right: 8,
+          bottom: 70,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: const Color(0xFF1E2428),
               borderRadius: BorderRadius.circular(24),
@@ -212,12 +220,12 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                 BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 4)),
               ],
             ),
-            child: Column(
+            child: const Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.lock_rounded, color: Colors.white70, size: 20),
-                const SizedBox(height: 6),
-                const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white54, size: 18),
+                Icon(Icons.lock_rounded, color: Colors.white70, size: 20),
+                SizedBox(height: 4),
+                Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white54, size: 18),
               ],
             ),
           ),
@@ -225,11 +233,11 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
 
         // Bottom Bar
         Container(
-          height: 54,
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          height: 52,
+          margin: const EdgeInsets.symmetric(horizontal: 6),
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E2428),
+            color: const Color(0xFF1F2428),
             borderRadius: BorderRadius.circular(28),
           ),
           child: Row(
@@ -266,9 +274,9 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                 ),
               ),
 
-              const SizedBox(width: 24),
+              const SizedBox(width: 18),
 
-              // Mic Button with gesture detection
+              // Mic Button
               GestureDetector(
                 onPanUpdate: (details) {
                   setState(() {
@@ -276,15 +284,14 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                     _dragOffsetY += details.delta.dy;
                   });
 
-                  if (_dragOffsetX < -90) {
+                  if (_dragOffsetX < -80) {
                     _handleTrash();
-                  } else if (_dragOffsetY < -65) {
+                  } else if (_dragOffsetY < -55) {
                     _handleLock();
                   }
                 },
                 onPanEnd: (_) {
                   if (_mode == RecordingMode.holding) {
-                    // Released without locking -> Send
                     _handleSend();
                   }
                 },
@@ -308,10 +315,11 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
   // --- STATE 2: LOCKED HANDS-FREE RECORDING ---
   Widget _buildLockedView() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF14171A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF191D21),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -319,20 +327,25 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
           // Top Row: Timer + Live Equalizer Waveform
           Row(
             children: [
+              ScaleTransition(
+                scale: _pulseAnimation,
+                child: const Icon(Icons.mic_rounded, color: Color(0xFFFF1744), size: 20),
+              ),
+              const SizedBox(width: 8),
               Text(
                 _formatDuration(_duration),
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               Expanded(
                 child: SizedBox(
-                  height: 28,
+                  height: 26,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: _liveAmplitudes.map((amp) {
                       return Container(
-                        width: 3.5,
-                        height: (28 * amp).clamp(4.0, 28.0),
+                        width: 3.2,
+                        height: (26 * amp).clamp(4.0, 26.0),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFF2E74),
                           borderRadius: BorderRadius.circular(2),
@@ -345,7 +358,7 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
             ],
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // Bottom Row: Trash | Pausar pill | Send button
           Row(
@@ -353,7 +366,7 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
             children: [
               // Trash Button
               IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFFF4081), size: 28),
+                icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFFF4081), size: 26),
                 onPressed: _handleTrash,
               ),
 
@@ -361,19 +374,19 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
               GestureDetector(
                 onTap: _handlePause,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF23282D),
-                    borderRadius: BorderRadius.circular(24),
+                    color: const Color(0xFF282E33),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.pause_rounded, color: Colors.white, size: 20),
-                      SizedBox(width: 8),
+                      Icon(Icons.pause_rounded, color: Colors.white, size: 18),
+                      SizedBox(width: 6),
                       Text(
                         'Pausar',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ],
                   ),
@@ -384,13 +397,13 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
               GestureDetector(
                 onTap: _handleSend,
                 child: Container(
-                  width: 48,
-                  height: 48,
+                  width: 44,
+                  height: 44,
                   decoration: const BoxDecoration(
                     color: Color(0xFFFF2E74),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.send_rounded, color: Colors.white, size: 22),
+                  child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
                 ),
               ),
             ],
@@ -407,10 +420,11 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
     final progress = (currentPosSec / totalSec).clamp(0.0, 1.0);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF14171A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF191D21),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -422,23 +436,21 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                 icon: Icon(
                   _isPreviewPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                   color: Colors.white,
-                  size: 30,
+                  size: 28,
                 ),
                 onPressed: _togglePreviewPlay,
               ),
               Expanded(
-                child: Container(
-                  height: 24,
-                  alignment: Alignment.centerLeft,
+                child: SizedBox(
+                  height: 22,
                   child: Stack(
                     alignment: Alignment.centerLeft,
                     children: [
-                      // Static bars background
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: List.generate(32, (i) {
-                          final barHeight = (8 + (i % 5) * 3.5).toDouble();
-                          final isPassed = (i / 32.0) <= progress;
+                        children: List.generate(30, (i) {
+                          final barHeight = (6 + (i % 5) * 3.5).toDouble();
+                          final isPassed = (i / 30.0) <= progress;
                           return Container(
                             width: 3,
                             height: barHeight,
@@ -453,15 +465,15 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Text(
                 _formatDuration(_isPreviewPlaying ? currentPosSec : _duration),
-                style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+                style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
               ),
             ],
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // Bottom Row: Trash | Continuar pill | Send button
           Row(
@@ -469,7 +481,7 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
             children: [
               // Trash
               IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFFF4081), size: 28),
+                icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFFF4081), size: 26),
                 onPressed: _handleTrash,
               ),
 
@@ -477,19 +489,19 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
               GestureDetector(
                 onTap: _handleResume,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                   decoration: BoxDecoration(
                     color: const Color(0xFF7A1B3B),
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.mic_rounded, color: Colors.white, size: 20),
-                      SizedBox(width: 8),
+                      Icon(Icons.mic_rounded, color: Colors.white, size: 18),
+                      SizedBox(width: 6),
                       Text(
                         'Continuar',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ],
                   ),
@@ -500,13 +512,13 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
               GestureDetector(
                 onTap: _handleSend,
                 child: Container(
-                  width: 48,
-                  height: 48,
+                  width: 44,
+                  height: 44,
                   decoration: const BoxDecoration(
                     color: Color(0xFFFF2E74),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.send_rounded, color: Colors.white, size: 22),
+                  child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
                 ),
               ),
             ],
