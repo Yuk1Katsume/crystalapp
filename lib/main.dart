@@ -10,7 +10,7 @@ import 'screens/chat_screen.dart';
 import 'firebase_options.dart';
 import 'services/supabase_config.dart';
 import 'services/update_service.dart';
-
+import 'services/call_notification_service.dart';
 import 'services/auth_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -21,6 +21,7 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   await SupabaseConfig.initialize();
+  await CallNotificationService().initialize();
   runApp(const CrystalApp());
 }
 

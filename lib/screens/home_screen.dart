@@ -21,6 +21,7 @@ import 'create_status_screen.dart';
 import 'status_view_screen.dart';
 import 'settings_screen.dart';
 import 'call_screen.dart';
+import 'incoming_call_screen.dart';
 import '../services/update_service.dart';
 import '../services/contacts_service.dart';
 
@@ -83,12 +84,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => CallScreen(
+            builder: (_) => IncomingCallScreen(
               callId: data['id'] ?? data['doc_id'] ?? '',
-              otherUserId: data['caller_id'] ?? '',
-              otherUserName: data['caller_name'] ?? 'Contacto',
-              otherUserAvatar: data['caller_avatar'],
-              isOutgoing: false,
+              callerId: data['caller_id'] ?? '',
+              callerName: data['caller_name'] ?? 'Contacto',
+              callerAvatar: data['caller_avatar'],
               isVideo: data['is_video'] ?? false,
             ),
           ),

@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../models/call_model.dart';
 import '../services/call_service.dart';
+import '../services/call_notification_service.dart';
 
 class CallScreen extends StatefulWidget {
   final String callId;
@@ -28,6 +31,7 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateMixin {
   final CallService _callService = CallService();
+  final AudioPlayer _soundPlayer = AudioPlayer();
   final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
   final String _currentName = FirebaseAuth.instance.currentUser?.displayName ?? 'Usuario';
   final String? _currentAvatar = FirebaseAuth.instance.currentUser?.photoURL;
@@ -48,23 +52,34 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
 
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 2),
+      duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
 
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.18).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
+    _playOutgoingDialToneIfOutgoing();
     _listenToCallSignals();
   }
 
+  void _playOutgoingDialToneIfOutgoing() async {
+    if (widget.isOutgoing) {
+      try {
+        await _soundPlayer.setReleaseMode(ReleaseMode.loop);
+        await _soundPlayer.play(AssetSource('audio/dial_tone.wav'));
+      } catch (_) {}
+    }
+  }
+
   void _listenToCallSignals() {
-    _callStreamSub = _callService.getCallStream(widget.callId).listen((doc) {
+    _callStreamSub = _callService.getCallStream(widget.callId).listen((doc) async {
       if (!doc.exists) return;
       final data = doc.data() ?? {};
       final status = data['status'] as String?;
 
       if (status == 'connected' && !_isConnected) {
+        await _soundPlayer.stop();
         setState(() {
           _isConnected = true;
         });
@@ -73,15 +88,6 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
         _onCallEndedByRemote();
       }
     });
-
-    // Auto connect after 2 seconds for demo/direct P2P call simulation if outgoing
-    if (widget.isOutgoing) {
-      Future.delayed(const Duration(seconds: 3), () {
-        if (mounted && !_isConnected) {
-          _callService.answerCall(widget.callId);
-        }
-      });
-    }
   }
 
   void _startTimer() {
@@ -95,21 +101,35 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
     });
   }
 
-  void _onCallEndedByRemote() {
+  void _onCallEndedByRemote() async {
     _callTimer?.cancel();
+    await _soundPlayer.stop();
+    try {
+      await _soundPlayer.play(AssetSource('audio/call_ended.wav'));
+    } catch (_) {}
+
+    await CallNotificationService().cancelCallNotification(widget.callId.hashCode);
+
     if (mounted) {
-      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Llamada finalizada'),
+          content: Text('Llamada finalizada 📞'),
           backgroundColor: Color(0xFF1E1E1E),
         ),
       );
+      Navigator.pop(context);
     }
   }
 
   Future<void> _hangup() async {
     _callTimer?.cancel();
+    await _soundPlayer.stop();
+    try {
+      await _soundPlayer.play(AssetSource('audio/call_ended.wav'));
+    } catch (_) {}
+
+    await CallNotificationService().cancelCallNotification(widget.callId.hashCode);
+
     await _callService.endCall(
       callId: widget.callId,
       callerId: widget.isOutgoing ? _currentUid : widget.otherUserId,
@@ -128,11 +148,32 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
     }
   }
 
+  void _toggleMute() {
+    setState(() {
+      _isMuted = !_isMuted;
+    });
+    try {
+      _callService.localStream?.getAudioTracks().forEach((track) {
+        track.enabled = !_isMuted;
+      });
+    } catch (_) {}
+  }
+
+  void _toggleSpeaker() {
+    setState(() {
+      _isSpeaker = !_isSpeaker;
+    });
+    try {
+      Helper.setSpeakerphoneOn(_isSpeaker);
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _pulseController.dispose();
     _callTimer?.cancel();
     _callStreamSub?.cancel();
+    _soundPlayer.dispose();
     super.dispose();
   }
 
@@ -146,7 +187,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     final statusText = _isConnected
         ? _formatDuration(_callDuration)
-        : (widget.isOutgoing ? 'Llamando...' : 'Llamada entrante...');
+        : (widget.isOutgoing ? 'Llamando...' : 'Conectando audio E2EE...');
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
@@ -183,7 +224,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFFF1744).withOpacity(_isConnected ? 0.3 : 0.6),
+                            color: const Color(0xFFFF1744).withOpacity(_isConnected ? 0.25 : 0.6),
                             blurRadius: 28,
                             spreadRadius: 4,
                           ),
@@ -192,10 +233,10 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
                       child: CircleAvatar(
                         radius: 65,
                         backgroundColor: const Color(0xFF1E1E1E),
-                        backgroundImage: (widget.otherUserAvatar != null && widget.otherUserAvatar!.isNotEmpty)
+                        backgroundImage: (widget.otherUserAvatar != null && widget.otherUserAvatar!.isNotEmpty && widget.otherUserAvatar!.startsWith('http'))
                             ? NetworkImage(widget.otherUserAvatar!)
                             : null,
-                        child: (widget.otherUserAvatar == null || widget.otherUserAvatar!.isEmpty)
+                        child: (widget.otherUserAvatar == null || !widget.otherUserAvatar!.startsWith('http'))
                             ? Text(
                                 widget.otherUserName.isNotEmpty ? widget.otherUserName[0].toUpperCase() : '🌸',
                                 style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold),
@@ -241,9 +282,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
                     icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
                     label: _isMuted ? 'Silenciado' : 'Silenciar',
                     isActive: _isMuted,
-                    onTap: () {
-                      setState(() => _isMuted = !_isMuted);
-                    },
+                    onTap: _toggleMute,
                   ),
 
                   // End Call (Hang up)
@@ -270,9 +309,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
                     icon: _isSpeaker ? Icons.volume_up_rounded : Icons.volume_down_rounded,
                     label: 'Altavoz',
                     isActive: _isSpeaker,
-                    onTap: () {
-                      setState(() => _isSpeaker = !_isSpeaker);
-                    },
+                    onTap: _toggleSpeaker,
                   ),
                 ],
               ),

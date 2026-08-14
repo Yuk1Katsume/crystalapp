@@ -14,12 +14,7 @@ rootProject.layout.buildDirectory.value(newBuildDir)
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-subprojects {
-    project.evaluationDependsOn(":app")
-}
 
-subprojects {
     project.configurations.all {
         resolutionStrategy.eachDependency {
             if (requested.group == "com.android.tools.build" && requested.name == "gradle") {
@@ -27,12 +22,19 @@ subprojects {
             }
         }
     }
-    project.plugins.whenPluginAdded {
-        if (this is com.android.build.gradle.AppPlugin || this is com.android.build.gradle.LibraryPlugin) {
-            val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
-            android?.compileSdkVersion(36)
+
+    afterEvaluate {
+        if (project.hasProperty("android")) {
+            val android = project.extensions.findByName("android")
+            if (android is com.android.build.gradle.BaseExtension) {
+                android.compileSdkVersion(36)
+            }
         }
     }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
