@@ -28,6 +28,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  late AnimationController _fabAnimationController;
+  late Animation<double> _expandAnimation;
+  bool _isFabMenuOpen = false;
+
   final GroupChatService _groupService = GroupChatService();
   final AuthService _authService = AuthService();
   final ChatService _chatService = ChatService();
@@ -41,6 +45,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _fabAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _expandAnimation = CurvedAnimation(
+      parent: _fabAnimationController,
+      curve: Curves.fastOutSlowIn,
+    );
+
     _ensureProfileSaved();
     _loadPhoneContacts();
     _chatService.startGlobalIncomingListener();
@@ -93,25 +106,51 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _incomingMsgSub?.cancel();
     _searchController.dispose();
+    _fabAnimationController.dispose();
     super.dispose();
+  }
+
+  void _toggleFabMenu() {
+    setState(() {
+      _isFabMenuOpen = !_isFabMenuOpen;
+      if (_isFabMenuOpen) {
+        _fabAnimationController.forward();
+      } else {
+        _fabAnimationController.reverse();
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B141B),
+      backgroundColor: const Color(0xFF0A0A0A),
       body: SafeArea(
-        child: IndexedStack(
-          index: _selectedBottomNavIndex,
+        child: Stack(
           children: [
-            _buildChatsTab(),
-            _buildStatusTab(),
-            _buildCallsTab(),
-            _buildAiChatTab(),
+            IndexedStack(
+              index: _selectedBottomNavIndex,
+              children: [
+                _buildChatsTab(),
+                _buildStatusTab(),
+                _buildCallsTab(),
+                _buildAiChatTab(),
+              ],
+            ),
+            if (_isFabMenuOpen)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: _toggleFabMenu,
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    color: Colors.black.withOpacity(0.6),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
-      floatingActionButton: _buildFloatingActionButton(),
+      floatingActionButton: _buildAnimatedExpandableFab(),
       bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
@@ -132,7 +171,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildTopHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
           const Text(
@@ -146,20 +185,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.camera_alt_outlined, color: Colors.white),
+            icon: const Icon(Icons.camera_alt_outlined, color: Colors.white70),
             tooltip: 'Cámara',
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Abre la cámara desde cualquier conversación para enviar fotos o notas.'),
+                  content: Text('Abre la cámara desde cualquier conversación para enviar fotos.'),
                   backgroundColor: Color(0xFF1E1E1E),
                 ),
               );
             },
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-            color: const Color(0xFF1E262C),
+            icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
+            color: const Color(0xFF1E1E1E),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
               if (val == 'new_group') {
@@ -205,8 +244,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Container(
         height: 44,
         decoration: BoxDecoration(
-          color: const Color(0xFF1F2C34),
+          color: const Color(0xFF1E1E1E),
           borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFF262626), width: 1),
         ),
         child: Row(
           children: [
@@ -268,8 +308,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF1F2C34),
+                color: const Color(0xFF1E1E1E),
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFF262626)),
               ),
               child: const Icon(Icons.add, color: Colors.white54, size: 18),
             );
@@ -288,17 +329,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
               decoration: BoxDecoration(
-                color: isSelected ? const Color(0xFF0F392B) : const Color(0xFF1F2C34),
+                color: isSelected ? const Color(0x33FF1744) : const Color(0xFF1E1E1E),
                 borderRadius: BorderRadius.circular(20),
-                border: isSelected
-                    ? Border.all(color: const Color(0xFF00A884).withOpacity(0.5), width: 1)
-                    : null,
+                border: Border.all(
+                  color: isSelected ? const Color(0xFFFF1744).withOpacity(0.6) : const Color(0xFF262626),
+                  width: 1,
+                ),
               ),
               child: Center(
                 child: Text(
                   filter,
                   style: TextStyle(
-                    color: isSelected ? const Color(0xFF25D366) : Colors.white60,
+                    color: isSelected ? const Color(0xFFFF1744) : Colors.white60,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                     fontSize: 13,
                   ),
@@ -413,7 +455,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           CircleAvatar(
             radius: 26,
-            backgroundColor: const Color(0xFF1E262C),
+            backgroundColor: const Color(0xFF1E1E1E),
             backgroundImage: (avatarUrl != null && avatarUrl.toString().startsWith('http'))
                 ? NetworkImage(avatarUrl)
                 : null,
@@ -432,9 +474,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 width: 13,
                 height: 13,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF25D366),
+                  color: Colors.greenAccent,
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF0B141B), width: 2),
+                  border: Border.all(color: const Color(0xFF0A0A0A), width: 2),
                 ),
               ),
             ),
@@ -489,7 +531,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: CircleAvatar(
         radius: 26,
-        backgroundColor: const Color(0xFF1E262C),
+        backgroundColor: const Color(0xFF1E1E1E),
         backgroundImage: hasIcon ? NetworkImage(group.iconUrl!) : null,
         child: !hasIcon
             ? const Icon(Icons.groups_rounded, color: Colors.white70, size: 26)
@@ -540,7 +582,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 16),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00A884),
+              backgroundColor: const Color(0xFFFF1744),
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             ),
@@ -574,7 +616,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
             ),
             IconButton(
-              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
               onPressed: () {},
             ),
           ],
@@ -586,7 +628,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children: [
               CircleAvatar(
                 radius: 26,
-                backgroundColor: const Color(0xFF1E262C),
+                backgroundColor: const Color(0xFF1E1E1E),
                 child: Text(
                   currentUser?.displayName?.isNotEmpty == true
                       ? currentUser!.displayName![0].toUpperCase()
@@ -600,7 +642,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 child: Container(
                   padding: const EdgeInsets.all(3),
                   decoration: const BoxDecoration(
-                    color: Color(0xFF00A884),
+                    color: Color(0xFFFF1744),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.add, color: Colors.white, size: 14),
@@ -674,7 +716,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
             ),
             IconButton(
-              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
               onPressed: () {},
             ),
           ],
@@ -684,8 +726,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           contentPadding: EdgeInsets.zero,
           leading: const CircleAvatar(
             radius: 24,
-            backgroundColor: Color(0xFF00A884),
-            child: Icon(Icons.link_rounded, color: Colors.black, size: 24),
+            backgroundColor: Color(0xFFFF1744),
+            child: Icon(Icons.link_rounded, color: Colors.white, size: 24),
           ),
           title: const Text(
             'Crear enlace de llamada',
@@ -772,12 +814,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Container(
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: const Color(0xFF1F2C34),
+              color: const Color(0xFF1E1E1E),
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: const Color(0xFFFF1744).withOpacity(0.3), width: 1.5),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFFFF1744).withOpacity(0.1),
+                  color: const Color(0xFFFF1744).withOpacity(0.12),
                   blurRadius: 24,
                   spreadRadius: 2,
                 ),
@@ -812,7 +854,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF101D25),
+                    color: const Color(0xFF121212),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
@@ -835,8 +877,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             height: 50,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: const Color(0xFF1F2C34),
+              color: const Color(0xFF1E1E1E),
               borderRadius: BorderRadius.circular(25),
+              border: Border.all(color: const Color(0xFF262626)),
             ),
             child: Row(
               children: [
@@ -869,83 +912,121 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // ==========================================
-  // FLOATING ACTION BUTTON
+  // EXPANDABLE FLOATING ACTION BUTTON
   // ==========================================
-  Widget? _buildFloatingActionButton() {
-    if (_selectedBottomNavIndex == 0) {
-      // Chats tab FAB
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          // Meta AI-style floating badge
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF1E262C),
-              border: Border.all(color: Colors.white12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
-                  blurRadius: 8,
+  Widget _buildAnimatedExpandableFab() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        ScaleTransition(
+          alignment: Alignment.bottomRight,
+          scale: _expandAnimation,
+          child: FadeTransition(
+            opacity: _expandAnimation,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _buildFabMenuItem(
+                  label: 'Buscar Usuarios',
+                  icon: Icons.person_search_rounded,
+                  color: const Color(0xFFFF1744),
+                  onTap: () {
+                    _toggleFabMenu();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+                    );
+                  },
                 ),
+                const SizedBox(height: 12),
+                _buildFabMenuItem(
+                  label: 'Crear Grupo',
+                  icon: Icons.group_add_rounded,
+                  color: Colors.deepPurpleAccent,
+                  onTap: () {
+                    _toggleFabMenu();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
               ],
             ),
-            child: IconButton(
-              icon: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFFF1744), size: 20),
-              tooltip: 'Crystal AI',
-              onPressed: () {
-                setState(() {
-                  _selectedBottomNavIndex = 3;
-                });
-              },
-            ),
           ),
-          const SizedBox(height: 12),
-          FloatingActionButton(
-            backgroundColor: const Color(0xFF00A884),
+        ),
+        FloatingActionButton(
+          backgroundColor: const Color(0xFFFF1744),
+          elevation: 6,
+          shape: const CircleBorder(),
+          onPressed: _toggleFabMenu,
+          child: AnimatedRotation(
+            turns: _isFabMenuOpen ? 1.125 : 0.0,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeInOutBack,
+            child: const Icon(Icons.add, size: 28, color: Colors.white),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFabMenuItem({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: FloatingActionButton.small(
+            heroTag: label,
+            backgroundColor: color,
             elevation: 4,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
-              );
-            },
-            child: const Icon(Icons.chat_bubble_rounded, color: Colors.black, size: 24),
+            shape: const CircleBorder(),
+            onPressed: onTap,
+            child: Icon(icon, color: Colors.white, size: 20),
           ),
-        ],
-      );
-    } else if (_selectedBottomNavIndex == 1) {
-      // Status tab FAB
-      return FloatingActionButton(
-        backgroundColor: const Color(0xFF00A884),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        onPressed: () {},
-        child: const Icon(Icons.camera_alt_rounded, color: Colors.black, size: 24),
-      );
-    } else if (_selectedBottomNavIndex == 2) {
-      // Calls tab FAB
-      return FloatingActionButton(
-        backgroundColor: const Color(0xFF00A884),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        onPressed: () {},
-        child: const Icon(Icons.add_ic_call_rounded, color: Colors.black, size: 24),
-      );
-    }
-    return null;
+        ),
+      ],
+    );
   }
 
   // ==========================================
-  // BOTTOM NAVIGATION BAR (WhatsApp Style)
+  // BOTTOM NAVIGATION BAR (Crystal Neon Pink Theme)
   // ==========================================
   Widget _buildBottomNavigationBar() {
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFF0B141B),
-        border: Border(top: BorderSide(color: Color(0xFF1F2C34), width: 0.8)),
+        color: Color(0xFF121212),
+        border: Border(top: BorderSide(color: Color(0xFF1E1E1E), width: 1.0)),
       ),
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -954,19 +1035,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _buildNavItem(0, Icons.chat_rounded, 'Chats'),
           _buildNavItem(1, Icons.donut_large_rounded, 'Estados', hasNotification: true),
           _buildNavItem(2, Icons.call_rounded, 'Llamadas'),
-          _buildNavItem(3, Icons.auto_awesome_rounded, 'Chat IA', isAi: true),
+          _buildNavItem(3, Icons.auto_awesome_rounded, 'Chat IA'),
         ],
       ),
     );
   }
 
-  Widget _buildNavItem(int index, IconData icon, String label, {bool hasNotification = false, bool isAi = false}) {
+  Widget _buildNavItem(int index, IconData icon, String label, {bool hasNotification = false}) {
     final isSelected = _selectedBottomNavIndex == index;
 
     return GestureDetector(
       onTap: () {
         setState(() {
           _selectedBottomNavIndex = index;
+          if (_isFabMenuOpen) _toggleFabMenu();
         });
       },
       behavior: HitTestBehavior.opaque,
@@ -981,7 +1063,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? (isAi ? const Color(0x33FF1744) : const Color(0xFF0F392B))
+                      ? const Color(0x33FF1744)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -989,7 +1071,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   icon,
                   size: 24,
                   color: isSelected
-                      ? (isAi ? const Color(0xFFFF1744) : const Color(0xFF25D366))
+                      ? const Color(0xFFFF1744)
                       : Colors.white54,
                 ),
               ),
@@ -1001,7 +1083,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     width: 8,
                     height: 8,
                     decoration: const BoxDecoration(
-                      color: Color(0xFF25D366),
+                      color: Color(0xFFFF1744),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -1013,7 +1095,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             label,
             style: TextStyle(
               color: isSelected
-                  ? Colors.white
+                  ? const Color(0xFFFF1744)
                   : Colors.white54,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
               fontSize: 12,
@@ -1079,7 +1161,7 @@ class _LastMessagePreviewState extends State<_LastMessagePreview> {
               Icon(
                 isRead ? Icons.done_all_rounded : Icons.done_rounded,
                 size: 15,
-                color: isRead ? const Color(0xFF53BDEB) : Colors.white38,
+                color: isRead ? const Color(0xFFFF1744) : Colors.white38,
               ),
               const SizedBox(width: 4),
             ],
