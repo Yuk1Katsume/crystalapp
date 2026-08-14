@@ -76,7 +76,7 @@ $releaseBody = @{
 } | ConvertTo-Json
 
 $createReleaseUrl = "https://api.github.com/repos/$GitHubRepo/releases"
-$releaseRes = Invoke-RestMethod -Uri $createReleaseUrl -Method Post -Headers $ghHeaders -Body $releaseBody
+$releaseRes = Invoke-RestMethod -Uri $createReleaseUrl -Method Post -Headers $ghHeaders -Body ([System.Text.Encoding]::UTF8.GetBytes($releaseBody)) -ContentType "application/json; charset=utf-8"
 
 $uploadBase = $releaseRes.upload_url.Split('{')[0]
 $apkBytes = [System.IO.File]::ReadAllBytes($apkPath)

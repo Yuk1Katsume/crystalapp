@@ -139,12 +139,14 @@ class GroupModel {
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? 'Group',
       description: json['description'] as String?,
-      iconUrl: json['iconUrl'] as String?,
-      memberIds: List<String>.from(json['memberIds'] ?? []),
-      adminId: json['adminId'] as String? ?? '',
+      iconUrl: (json['iconUrl'] ?? json['icon_url']) as String?,
+      memberIds: List<String>.from(json['memberIds'] ?? json['member_ids'] ?? []),
+      adminId: (json['adminId'] ?? json['admin_id']) as String? ?? '',
       createdAt: json['createdAt'] != null
           ? DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now()
-          : DateTime.now(),
+          : (json['created_at'] != null
+              ? DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now()
+              : DateTime.now()),
     );
   }
 }

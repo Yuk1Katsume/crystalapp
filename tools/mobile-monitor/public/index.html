@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="es" class="dark">
 
 <head>
   <meta charset="UTF-8">
@@ -17,8 +17,8 @@
             background: "hsl(var(--background, 240 10% 3.9%))",
             foreground: "hsl(var(--foreground, 0 0% 98%))",
             primary: {
-              DEFAULT: "hsl(var(--primary, 0 0% 98%))",
-              foreground: "hsl(var(--primary-foreground, 240 5.9% 10%))",
+              DEFAULT: "#3b82f6",
+              foreground: "#ffffff",
             },
             secondary: {
               DEFAULT: "hsl(var(--secondary, 240 3.7% 15.9%))",
@@ -53,8 +53,8 @@
       --foreground: 0 0% 98%;
       --card: 0 0% 10%;
       --card-foreground: 0 0% 98%;
-      --primary: 0 0% 98%;
-      --primary-foreground: 0 0% 9%;
+      --primary: 217 91% 60%;
+      --primary-foreground: 0 0% 100%;
       --secondary: 0 0% 14%;
       --secondary-foreground: 0 0% 98%;
       --muted: 0 0% 14%;
@@ -76,44 +76,99 @@
       margin: 0 !important;
     }
 
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 4px;
+    }
+
     .headers-container {
-      background: #161616 !important;
-      border-bottom: 1px solid #262626 !important;
+      background: #141414 !important;
+      border-bottom: 1px solid #222 !important;
       position: relative;
       z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+    }
+
+    .tabs-wrapper {
       display: flex;
       overflow-x: auto;
       white-space: nowrap;
       -webkit-overflow-scrolling: touch;
+      flex: 1;
+      padding: 4px 0;
     }
 
     .cascade-tab {
-      padding: 10px 16px;
+      padding: 8px 14px;
       cursor: pointer;
-      border-right: 1px solid #262626;
+      border-radius: 6px;
+      margin-right: 4px;
       opacity: 0.7;
       transition: all 0.2s;
       font-size: 13px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
+      background: #1a1a1a;
+      border: 1px solid #282828;
     }
 
     .cascade-tab.active {
       opacity: 1;
-      background: #222222;
-      border-bottom: 2px solid #3b82f6;
+      background: #252525;
+      border-color: #3b82f6;
+      color: #fff;
     }
 
     .cascade-tab .status {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       background: #666;
     }
 
     .cascade-tab.active-window .status {
-      background: #4ade80;
+      background: #22c55e;
+      box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-left: 6px;
+    }
+
+    .hdr-btn {
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      background: #202020;
+      border: 1px solid #303030;
+      color: #e0e0e0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .hdr-btn:hover {
+      background: #2c2c2c;
+      color: #fff;
+      border-color: #444;
     }
 
     .chat-container {
@@ -162,8 +217,8 @@
       color: #e5e7eb !important;
     }
     .prose pre {
-      background: #181818 !important;
-      border: 1px solid #2a2a2a !important;
+      background: #161616 !important;
+      border: 1px solid #282828 !important;
       border-radius: 8px;
       padding: 10px;
       overflow-x: auto;
@@ -176,11 +231,123 @@
       color: #93c5fd !important;
     }
 
+    /* Action bar above input */
+    .actions-bar {
+      background: #181818;
+      border-top: 1px solid #262626;
+      border-bottom: 1px solid #262626;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all 0.3s;
+    }
+
+    .changed-files-list {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      white-space: nowrap;
+      padding-bottom: 2px;
+    }
+
+    .file-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #cbd5e1;
+      font-family: monospace;
+    }
+
+    .action-buttons-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .action-btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+      border: none;
+    }
+
+    .btn-accept {
+      background: #15803d;
+      color: white;
+    }
+    .btn-accept:hover {
+      background: #16a34a;
+    }
+
+    .btn-reject {
+      background: #b91c1c;
+      color: white;
+    }
+    .btn-reject:hover {
+      background: #dc2626;
+    }
+
+    .btn-proceed {
+      background: #2563eb;
+      color: white;
+    }
+    .btn-proceed:hover {
+      background: #3b82f6;
+    }
+
+    .btn-review {
+      background: #334155;
+      color: #f1f5f9;
+    }
+    .btn-review:hover {
+      background: #475569;
+    }
+
+    .btn-undo {
+      background: #78350f;
+      color: #fef3c7;
+    }
+    .btn-undo:hover {
+      background: #92400e;
+    }
+
+    /* Image preview thumbnail */
+    .image-preview-container {
+      background: #141414;
+      padding: 6px 12px;
+      border-top: 1px solid #222;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .image-preview-thumb {
+      width: 44px;
+      height: 44px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid #444;
+    }
+
     .input-section {
-      background: #161616 !important;
-      padding: 10px 12px;
-      padding-bottom: calc(10px + env(safe-area-inset-bottom));
-      border-top: 1px solid #262626 !important;
+      background: #141414 !important;
+      padding: 8px 12px;
+      padding-bottom: calc(8px + env(safe-area-inset-bottom));
       position: relative;
       z-index: 1000;
       display: flex;
@@ -188,17 +355,39 @@
       align-items: center;
     }
 
+    .attach-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: #222;
+      border: 1px solid #333;
+      color: #a3a3a3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .attach-btn:hover {
+      background: #2a2a2a;
+      color: #fff;
+      border-color: #444;
+    }
+
     textarea {
       flex: 1;
-      background: #0d0d0d;
-      border: 1px solid #333;
+      background: #0a0a0a;
+      border: 1px solid #2e2e2e;
       color: #f5f5f7;
       padding: 10px 12px;
       border-radius: 8px;
       resize: none;
-      height: 44px;
+      height: 42px;
       font-size: 14px;
       outline: none;
+      line-height: 1.4;
     }
 
     textarea:focus {
@@ -206,19 +395,29 @@
     }
 
     button#sendBtn {
-      padding: 0 18px;
-      height: 44px;
+      padding: 0 16px;
+      height: 42px;
       background: #3b82f6;
       border: none;
       color: white;
       border-radius: 8px;
       font-weight: 600;
+      font-size: 14px;
       cursor: pointer;
       transition: background 0.2s;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     button#sendBtn:hover {
       background: #2563eb;
+    }
+
+    button#sendBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
     .loading {
@@ -227,30 +426,121 @@
       margin-top: 60px;
       font-size: 14px;
     }
+
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      font-size: 13px;
+      z-index: 2000;
+      display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
   </style>
 </head>
 
 <body>
 
-  <div class="headers-container" id="tabsContainer">
-    <div class="cascade-tab">Connecting...</div>
+  <!-- Top Header with Chat Switcher and History / Actions -->
+  <div class="headers-container" id="headerBar">
+    <div class="tabs-wrapper" id="tabsContainer">
+      <div class="cascade-tab">Conectando...</div>
+    </div>
+    <div class="header-actions">
+      <button class="hdr-btn" id="loadOlderBtn" title="Cargar mensajes anteriores del chat">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Historial</span>
+      </button>
+      <button class="hdr-btn" id="refreshBtn" title="Sincronizar chat">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      </button>
+    </div>
   </div>
 
+  <!-- Chat conversation snapshot -->
   <div class="chat-container" id="chatContainer">
     <div class="chat-content" id="chatContent">
       <div class="loading">Cargando chat de Antigravity...</div>
     </div>
   </div>
 
-  <div class="input-section">
-    <textarea id="messageInput" placeholder="Escribe un mensaje para Antigravity..."></textarea>
-    <button id="sendBtn">Send</button>
+  <!-- Actions Bar (Changed Files, Accept, Reject, Proceed, Review) -->
+  <div class="actions-bar" id="actionsBar" style="display: none;">
+    <div class="changed-files-list" id="changedFilesList">
+      <!-- File chips injected here -->
+    </div>
+    <div class="action-buttons-row" id="actionButtonsRow">
+      <!-- Buttons injected here -->
+    </div>
   </div>
+
+  <!-- Attached Image Preview Bar -->
+  <div class="image-preview-container" id="imagePreviewContainer" style="display: none;">
+    <img id="imagePreview" class="image-preview-thumb" src="" alt="Adjunto" />
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-gray-200 truncate" id="imageName">imagen.png</div>
+      <div class="text-[11px] text-gray-400">Imagen lista para enviar</div>
+    </div>
+    <button id="removeImageBtn" class="text-gray-400 hover:text-white p-1">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- Input Section -->
+  <div class="input-section">
+    <!-- Hidden File Input for Image Selection -->
+    <input type="file" id="fileInput" accept="image/*" class="hidden" />
+    
+    <button class="attach-btn" id="attachBtn" title="Adjuntar imagen">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+    </button>
+
+    <textarea id="messageInput" placeholder="Escribe un mensaje o pega una imagen..."></textarea>
+    
+    <button id="sendBtn">
+      <span>Send</span>
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- Toast for action feedback -->
+  <div id="toast">Acción ejecutada</div>
 
   <script>
     const tabsContainer = document.getElementById('tabsContainer');
     const chatContent = document.getElementById('chatContent');
     const chatContainer = document.getElementById('chatContainer');
+    const actionsBar = document.getElementById('actionsBar');
+    const changedFilesList = document.getElementById('changedFilesList');
+    const actionButtonsRow = document.getElementById('actionButtonsRow');
+    const fileInput = document.getElementById('fileInput');
+    const attachBtn = document.getElementById('attachBtn');
+    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+    const imagePreview = document.getElementById('imagePreview');
+    const imageName = document.getElementById('imageName');
+    const removeImageBtn = document.getElementById('removeImageBtn');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const loadOlderBtn = document.getElementById('loadOlderBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const toast = document.getElementById('toast');
 
     let cascades = [];
     let currentCascadeId = null;
@@ -258,6 +548,14 @@
     let pollTimer = null;
     let lastRenderedHtml = '';
     let isFirstLoad = true;
+    let selectedImageBase64 = null;
+    let selectedImageFilename = null;
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2500);
+    }
 
     async function fetchCascades() {
       try {
@@ -295,6 +593,11 @@
               updateContentOnly(currentCascadeId);
             }
           }
+          if (data.type === 'actions_update') {
+            if (data.cascadeId === currentCascadeId) {
+              renderActionsBar(data.actions);
+            }
+          }
         } catch (e) {}
       };
 
@@ -312,7 +615,7 @@
         <div class="cascade-tab ${c.id === currentCascadeId ? 'active' : ''} ${c.active ? 'active-window' : ''}" 
              onclick="selectCascade('${c.id}')">
             <div class="status"></div>
-            ${c.title || 'Antigravity Chat'}
+            <span class="truncate max-w-[140px]">${c.title || 'Antigravity Chat'}</span>
         </div>
       `).join('');
     }
@@ -325,10 +628,14 @@
       currentCascadeId = id;
       renderTabs();
       updateContentOnly(id);
+      fetchActions(id);
 
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(() => {
-        if (currentCascadeId) updateContentOnly(currentCascadeId);
+        if (currentCascadeId) {
+          updateContentOnly(currentCascadeId);
+          fetchActions(currentCascadeId);
+        }
       }, 1500);
     }
 
@@ -339,7 +646,6 @@
         const data = await res.json();
         if (!data || !data.html) return;
 
-        // If the HTML is identical, don't touch innerHTML to prevent resetting scroll position!
         if (data.html === lastRenderedHtml) {
           return;
         }
@@ -350,45 +656,201 @@
         chatContent.innerHTML = data.html;
         lastRenderedHtml = data.html;
 
-        // Auto-scroll to bottom on first load or if user was already at bottom
         if (isFirstLoad || wasNearBottom) {
           chatContent.scrollTop = chatContent.scrollHeight;
           isFirstLoad = false;
         } else {
-          // Preserve user scroll position if they scrolled up to read earlier messages
           chatContent.scrollTop = prevScrollTop;
         }
       } catch (e) {}
     }
 
-    async function sendMessage() {
-      const input = document.getElementById('messageInput');
-      const text = input.value.trim();
-      if (!text || !currentCascadeId) return;
-
-      input.value = '';
-
+    async function fetchActions(id) {
       try {
-        await fetch(`/send/${currentCascadeId}`, {
+        const res = await fetch(`/actions/${id}`);
+        if (res.ok) {
+          const data = await res.json();
+          renderActionsBar(data);
+        }
+      } catch (e) {}
+    }
+
+    function renderActionsBar(data) {
+      const files = data.changedFiles || [];
+      const actions = data.actions || [];
+
+      if (files.length === 0 && actions.length === 0) {
+        actionsBar.style.display = 'none';
+        return;
+      }
+
+      actionsBar.style.display = 'flex';
+
+      // Render changed files
+      if (files.length > 0) {
+        changedFilesList.style.display = 'flex';
+        changedFilesList.innerHTML = '<span class="text-xs text-gray-400 mr-1 flex items-center gap-1"><svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Archivos:</span>' +
+          files.map(f => `<span class="file-chip">📄 ${f}</span>`).join('');
+      } else {
+        changedFilesList.style.display = 'none';
+      }
+
+      // Default review buttons if files exist or actions detected
+      let buttonsHtml = '';
+
+      if (actions.length > 0) {
+        buttonsHtml = actions.map(act => {
+          let btnClass = 'btn-review';
+          let icon = '⚡';
+          if (act.type === 'accept') { btnClass = 'btn-accept'; icon = '✅'; }
+          else if (act.type === 'reject') { btnClass = 'btn-reject'; icon = '❌'; }
+          else if (act.type === 'proceed') { btnClass = 'btn-proceed'; icon = '▶'; }
+          else if (act.type === 'review') { btnClass = 'btn-review'; icon = '🔍'; }
+          else if (act.type === 'undo') { btnClass = 'btn-undo'; icon = '↩'; }
+          else if (act.type === 'load_older') { return ''; }
+
+          return `<button class="action-btn ${btnClass}" onclick="triggerAction('${act.id}', '${act.label}')">${icon} ${act.label}</button>`;
+        }).join('');
+      } else if (files.length > 0) {
+        // Fallback standard review actions
+        buttonsHtml = `
+          <button class="action-btn btn-accept" onclick="triggerAction('accept', 'Accept')">✅ Accept</button>
+          <button class="action-btn btn-reject" onclick="triggerAction('reject', 'Reject')">❌ Reject</button>
+          <button class="action-btn btn-review" onclick="triggerAction('review', 'Review')">🔍 Review</button>
+        `;
+      }
+
+      actionButtonsRow.innerHTML = buttonsHtml;
+    }
+
+    async function triggerAction(actionId, label) {
+      if (!currentCascadeId) return;
+      showToast(`Ejecutando: ${label}...`);
+      try {
+        const res = await fetch(`/click-action/${currentCascadeId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
+          body: JSON.stringify({ action: actionId })
         });
-        setTimeout(() => updateContentOnly(currentCascadeId), 300);
+        const json = await res.json();
+        if (json.ok) {
+          showToast(`✓ ${label} ejecutado`);
+          setTimeout(() => {
+            updateContentOnly(currentCascadeId);
+            fetchActions(currentCascadeId);
+          }, 400);
+        } else {
+          showToast(`Aviso: ${json.reason || 'Botón no disponible'}`);
+        }
       } catch (e) {
-        input.value = text;
-        alert("Error enviando mensaje: " + e.message);
+        showToast(`Error: ${e.message}`);
       }
     }
 
-    document.getElementById('sendBtn').onclick = sendMessage;
+    // Image attachment handlers
+    attachBtn.onclick = () => fileInput.click();
 
-    document.getElementById('messageInput').addEventListener('keydown', (e) => {
+    fileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      processImageFile(file);
+    };
+
+    function processImageFile(file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        selectedImageBase64 = event.target.result;
+        selectedImageFilename = file.name || 'imagen.png';
+        imagePreview.src = selectedImageBase64;
+        imageName.textContent = selectedImageFilename;
+        imagePreviewContainer.style.display = 'flex';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    removeImageBtn.onclick = () => {
+      selectedImageBase64 = null;
+      selectedImageFilename = null;
+      fileInput.value = '';
+      imagePreviewContainer.style.display = 'none';
+    };
+
+    // Paste image from clipboard directly into textarea
+    messageInput.addEventListener('paste', (e) => {
+      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+      for (const item of items) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          processImageFile(file);
+          break;
+        }
+      }
+    });
+
+    // Send message with optional image
+    async function sendMessage() {
+      const text = messageInput.value.trim();
+      if (!text && !selectedImageBase64) return;
+      if (!currentCascadeId) return;
+
+      const msgPayload = {
+        message: text,
+        imageBase64: selectedImageBase64,
+        imageName: selectedImageFilename
+      };
+
+      // Clear UI immediately
+      messageInput.value = '';
+      const hadImage = !!selectedImageBase64;
+      selectedImageBase64 = null;
+      selectedImageFilename = null;
+      fileInput.value = '';
+      imagePreviewContainer.style.display = 'none';
+      sendBtn.disabled = true;
+
+      showToast(hadImage ? 'Enviando imagen y mensaje...' : 'Enviando mensaje...');
+
+      try {
+        const res = await fetch(`/send/${currentCascadeId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(msgPayload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('✓ Mensaje enviado');
+          setTimeout(() => updateContentOnly(currentCascadeId), 400);
+        } else {
+          showToast(`Error: ${data.reason || 'No se pudo enviar'}`);
+        }
+      } catch (e) {
+        showToast("Error de conexión: " + e.message);
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    sendBtn.onclick = sendMessage;
+
+    messageInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
       }
     });
+
+    // Header buttons
+    loadOlderBtn.onclick = () => {
+      triggerAction('load_older', 'Cargar anteriores');
+    };
+
+    refreshBtn.onclick = () => {
+      if (currentCascadeId) {
+        showToast('Sincronizando...');
+        updateContentOnly(currentCascadeId);
+        fetchActions(currentCascadeId);
+      }
+    };
 
     fetchCascades();
     connectWS();

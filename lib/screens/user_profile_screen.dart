@@ -642,11 +642,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           )
                         else
                           ..._groupsInCommon.map((group) {
+                            final hasIcon = group.iconUrl != null && group.iconUrl!.isNotEmpty;
                             return ListTile(
-                              leading: const CircleAvatar(
+                              leading: CircleAvatar(
                                 radius: 18,
-                                backgroundColor: Colors.deepPurpleAccent,
-                                child: Icon(Icons.group_rounded, color: Colors.white, size: 18),
+                                backgroundColor: const Color(0xFF222222),
+                                backgroundImage: hasIcon ? NetworkImage(group.iconUrl!) : null,
+                                child: !hasIcon
+                                    ? const Icon(Icons.group_rounded, color: Colors.white70, size: 18)
+                                    : null,
                               ),
                               title: Text(group.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
                               subtitle: Text('${group.memberIds.length} miembros', style: const TextStyle(color: Colors.white38, fontSize: 11)),

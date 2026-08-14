@@ -339,12 +339,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           itemCount: groups.length,
           itemBuilder: (context, index) {
             final group = groups[index];
+            final hasIcon = group.iconUrl != null && group.iconUrl!.isNotEmpty;
+
             return ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              leading: const CircleAvatar(
+              leading: CircleAvatar(
                 radius: 24,
-                backgroundColor: Color(0xFFFF1744),
-                child: Icon(Icons.group_rounded, color: Colors.white, size: 24),
+                backgroundColor: const Color(0xFF222222),
+                backgroundImage: hasIcon ? NetworkImage(group.iconUrl!) : null,
+                child: !hasIcon
+                    ? const Icon(Icons.group_rounded, color: Colors.white70, size: 24)
+                    : null,
               ),
               title: Text(group.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
               subtitle: Text('${group.memberIds.length} miembros • 🔒 Grupo E2EE', style: const TextStyle(color: Colors.white38, fontSize: 13)),

@@ -148,6 +148,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
+    _messageController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _focusNode.addListener(_onFocusChange);
     _fetchRecipientAvatar();
     _subscribeToPresence();
@@ -986,52 +989,204 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildInputBar() {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    final isEditing = _editingMessage != null;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      color: const Color(0xFF121212),
+      padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+      color: Colors.transparent,
       child: SafeArea(
         bottom: !_isPickerVisible,
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            IconButton(
-              icon: Icon(
-                _isPickerVisible ? Icons.keyboard : Icons.emoji_emotions_outlined,
-                color: const Color(0xFFFF1744),
-              ),
-              onPressed: _togglePicker,
-            ),
-            IconButton(
-              icon: const Icon(Icons.photo_library, color: Colors.white60),
-              onPressed: _sendImage,
-            ),
+            // Left Pill Capsule (Emoji + TextField + Paperclip + Camera)
             Expanded(
-              child: TextField(
-                controller: _messageController,
-                focusNode: _focusNode,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: _editingMessage != null ? 'Editando mensaje...' : 'Escribe un mensaje cifrado...',
-                  hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
-                  filled: true,
-                  fillColor: const Color(0xFF1E1E1E),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F2428),
+                  borderRadius: BorderRadius.circular(26),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Emoji / Keyboard toggle
+                    IconButton(
+                      icon: Icon(
+                        _isPickerVisible ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined,
+                        color: const Color(0xFF8696A0),
+                        size: 24,
+                      ),
+                      splashRadius: 20,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                      onPressed: _togglePicker,
+                    ),
+
+                    // Message text input
+                    Expanded(
+                      child: TextField(
+                        controller: _messageController,
+                        focusNode: _focusNode,
+                        style: const TextStyle(color: Colors.white, fontSize: 16),
+                        cursorColor: const Color(0xFFFF2E74),
+                        maxLines: 5,
+                        minLines: 1,
+                        decoration: InputDecoration(
+                          hintText: isEditing ? 'Editando mensaje...' : 'Mensaje',
+                          hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 16),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+                        ),
+                      ),
+                    ),
+
+                    // Attachment paperclip
+                    IconButton(
+                      icon: const Icon(Icons.attach_file_rounded, color: Color(0xFF8696A0), size: 24),
+                      splashRadius: 20,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
+                      onPressed: _showAttachmentMenu,
+                    ),
+
+                    // Camera icon
+                    IconButton(
+                      icon: const Icon(Icons.camera_alt_rounded, color: Color(0xFF8696A0), size: 22),
+                      splashRadius: 20,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 38),
+                      onPressed: () => _sendImage(source: ImageSource.camera),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 6),
+
+            // Right Neon Pink Circular Button (Mic / Send / Check)
+            GestureDetector(
+              onTap: () {
+                if (hasText || isEditing) {
+                  _sendMessage();
+                } else {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        backgroundColor: Color(0xFF1E1E1E),
+                        behavior: SnackBarBehavior.floating,
+                        duration: Duration(seconds: 2),
+                        content: Text('Nota de voz no disponible en esta versión 🎙️', style: TextStyle(color: Colors.white)),
+                      ),
+                    );
+                  }
+                }
+              },
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFFFF2E74),
+                ),
+                child: Center(
+                  child: Icon(
+                    isEditing
+                        ? Icons.check_rounded
+                        : (hasText ? Icons.send_rounded : Icons.mic_rounded),
+                    color: const Color(0xFF121212),
+                    size: isEditing ? 24 : (hasText ? 22 : 24),
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 8),
-            CircleAvatar(
-              backgroundColor: const Color(0xFFFF1744),
-              child: IconButton(
-                icon: Icon(_editingMessage != null ? Icons.check : Icons.send, color: Colors.white, size: 20),
-                onPressed: _sendMessage,
-              ),
-            ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showAttachmentMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161616),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildAttachmentOption(
+                    icon: Icons.photo_library_rounded,
+                    label: 'Galería',
+                    color: const Color(0xFFAB47BC),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _sendImage(source: ImageSource.gallery);
+                    },
+                  ),
+                  _buildAttachmentOption(
+                    icon: Icons.camera_alt_rounded,
+                    label: 'Cámara',
+                    color: const Color(0xFFFF2E74),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _sendImage(source: ImageSource.camera);
+                    },
+                  ),
+                  _buildAttachmentOption(
+                    icon: Icons.sticky_note_2_rounded,
+                    label: 'Stickers',
+                    color: const Color(0xFF00E5FF),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _togglePicker();
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttachmentOption({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundColor: color.withOpacity(0.18),
+            child: Icon(icon, color: color, size: 28),
+          ),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500)),
+        ],
       ),
     );
   }
@@ -1089,22 +1244,23 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
-  void _sendImage() async {
-    final file = await _groupService.pickImage();
-    if (file == null) return;
+  void _sendImage({ImageSource source = ImageSource.gallery}) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: source, imageQuality: 85);
+    if (picked == null) return;
 
     if (isGroup) {
       await _groupService.sendGroupMessage(
         groupId: widget.groupId!,
         text: '📷 Imagen cifrada',
         type: ChatMessageType.image,
-        mediaUrl: file.path,
+        mediaUrl: picked.path,
       );
     } else if (widget.recipientId != null) {
       await _chatService.sendDirectMessage(
         recipientId: widget.recipientId!,
         text: '📷 Imagen cifrada',
-        mediaUrl: file.path,
+        mediaUrl: picked.path,
       );
     }
     if (mounted) {
