@@ -219,6 +219,130 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _starSelectedMessages() async {
+    final anyNotStarred = _selectedMessages.any((m) => !m.isStarred);
+    final targetStarred = anyNotStarred;
+
+    for (var msg in _selectedMessages) {
+      if ((msg.type == ChatMessageType.sticker || msg.text == '🎨 Sticker') && msg.mediaUrl != null) {
+        if (targetStarred) {
+          await StickerService.addFavorite(msg.mediaUrl!);
+        }
+      }
+      await _localDb.toggleStarredMessage(msg.id, targetStarred);
+    }
+
+    setState(() {
+      _selectedMessages.clear();
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1E1E1E),
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            targetStarred ? 'Mensaje añadido a destacados ⭐️' : 'Mensaje eliminado de destacados',
+            style: const TextStyle(color: Colors.white),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    _refreshMessages();
+  }
+
+  Future<void> _showStickerOptionsSheet(Message msg) async {
+    if (msg.mediaUrl == null) return;
+    final isFav = await StickerService.isFavorite(msg.mediaUrl!);
+
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161616),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Image.network(
+                msg.mediaUrl!,
+                width: 110,
+                height: 110,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 60, color: Colors.white38),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: Icon(
+                  isFav ? Icons.star_rounded : Icons.star_border_rounded,
+                  color: isFav ? const Color(0xFFFF1744) : Colors.white,
+                ),
+                title: Text(
+                  isFav ? 'Eliminar de favoritos' : 'Añadir a favoritos ⭐',
+                  style: TextStyle(color: isFav ? const Color(0xFFFF1744) : Colors.white, fontWeight: FontWeight.bold),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final nowFav = await StickerService.toggleFavorite(msg.mediaUrl!);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: const Color(0xFF1E1E1E),
+                        content: Text(
+                          nowFav ? 'Sticker añadido a favoritos ⭐' : 'Sticker eliminado de favoritos',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  msg.isStarred ? Icons.star_rounded : Icons.star_border_rounded,
+                  color: msg.isStarred ? const Color(0xFFFF1744) : Colors.white,
+                ),
+                title: Text(
+                  msg.isStarred ? 'Quitar de destacados' : 'Destacar mensaje ⭐️',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _localDb.toggleStarredMessage(msg.id, !msg.isStarred);
+                  if (!msg.isStarred) {
+                    await StickerService.addFavorite(msg.mediaUrl!);
+                  }
+                  _refreshMessages();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.forward_rounded, color: Colors.white),
+                title: const Text('Reenviar sticker', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _selectedMessages.clear();
+                  _selectedMessages.add(msg);
+                  _forwardSelectedMessages();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   bool _recipientIsOnline = false;
 
   void _subscribeToPresence() {
@@ -333,33 +457,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           SnackBar(content: Text('Reenviado a ${targetUser['display_name'] ?? targetUser['username']}')),
         );
       }
-    }
-  }
-
-  Future<void> _starSelectedMessages() async {
-    final anyNotStarred = _selectedMessages.any((m) => !m.isStarred);
-    final targetStarred = anyNotStarred;
-
-    for (var msg in _selectedMessages) {
-      await _localDb.toggleStarredMessage(msg.id, targetStarred);
-    }
-
-    setState(() {
-      _selectedMessages.clear();
-    });
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF1E1E1E),
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-            targetStarred ? 'Mensaje añadido a destacados ⭐️' : 'Mensaje eliminado de destacados',
-            style: const TextStyle(color: Colors.white),
-          ),
-          duration: const Duration(seconds: 2),
-        ),
-      );
     }
   }
 
@@ -726,48 +823,62 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     if (isSticker && msg.mediaUrl != null) {
       return Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          decoration: isSelected
-              ? BoxDecoration(
-                  border: Border.all(color: const Color(0xFFFF1744), width: 2.0),
-                  borderRadius: BorderRadius.circular(16),
-                )
-              : null,
-          child: Column(
-            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            children: [
-              Image.network(
-                msg.mediaUrl!,
-                width: 140,
-                height: 140,
-                fit: BoxFit.contain,
-                cacheWidth: 280,
-                cacheHeight: 280,
-                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 80, color: Colors.white30),
-              ),
-              Container(
-                margin: const EdgeInsets.only(top: 2),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xCC1E1E1E), // Semi-transparent dark mini-pill
-                  borderRadius: BorderRadius.circular(12),
+        child: GestureDetector(
+          onTap: () {
+            if (_selectedMessages.isNotEmpty) {
+              _toggleMessageSelection(msg);
+            } else {
+              _showStickerOptionsSheet(msg);
+            }
+          },
+          onLongPress: () => _toggleMessageSelection(msg),
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            decoration: isSelected
+                ? BoxDecoration(
+                    border: Border.all(color: const Color(0xFFFF1744), width: 2.0),
+                    borderRadius: BorderRadius.circular(16),
+                  )
+                : null,
+            child: Column(
+              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Image.network(
+                  msg.mediaUrl!,
+                  width: 140,
+                  height: 140,
+                  fit: BoxFit.contain,
+                  cacheWidth: 280,
+                  cacheHeight: 280,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 80, color: Colors.white30),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 10),
-                    ),
-                    if (isMe) ...[
-                      const SizedBox(width: 4),
-                      _buildStatusIcon(msg),
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCC1E1E1E), // Semi-transparent dark mini-pill
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (msg.isStarred) ...[
+                        const Icon(Icons.star_rounded, size: 12, color: Color(0xFFFF1744)),
+                        const SizedBox(width: 3),
+                      ],
+                      Text(
+                        '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
+                        style: const TextStyle(color: Colors.white70, fontSize: 10),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 4),
+                        _buildStatusIcon(msg),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -1037,10 +1148,22 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
   Future<void> _initStickersAndRoles() async {
     final isAdmin = await RoleService.isSuperAdmin();
     final customStickers = await StickerService.loadCustomStickers();
+    final favoriteStickers = await StickerService.getFavoriteStickers();
 
     final List<StickerPack> packs = [];
 
-    // Custom stickers pack
+    // 1. Favorites pack (Star icon)
+    final favPack = StickerPack(
+      id: 'pack_favorites',
+      name: 'Favoritos ⭐',
+      trayIconUrl: 'https://api.dicebear.com/7.x/bottts/png?seed=fav_star',
+      stickers: favoriteStickers
+          .map((s) => Sticker(id: s.id, imageUrl: s.imageUrl))
+          .toList(),
+    );
+    packs.add(favPack);
+
+    // 2. Custom stickers pack
     final customPack = StickerPack(
       id: 'pack_custom',
       name: 'Comunidad ✨',
@@ -1051,8 +1174,9 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
           .map((s) => Sticker(id: s.id, imageUrl: s.imageUrl))
           .toList(),
     );
-
     packs.add(customPack);
+
+    // 3. Default packs
     packs.addAll(mockStickerPacks);
 
     if (mounted) {
@@ -1287,6 +1411,7 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
     final safeIndex = _selectedStickerPackIndex < packs.length ? _selectedStickerPackIndex : 0;
     final currentPack = packs[safeIndex];
     final isCustomPack = currentPack.id == 'pack_custom';
+    final isFavoritesPack = currentPack.id == 'pack_favorites';
 
     final totalItems = (_isSuperAdmin && isCustomPack)
         ? currentPack.stickers.length + 1
@@ -1303,6 +1428,8 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
             itemBuilder: (context, index) {
               final pack = packs[index];
               final isSelected = index == safeIndex;
+              final isFav = pack.id == 'pack_favorites';
+
               return GestureDetector(
                 onTap: () {
                   setState(() => _selectedStickerPackIndex = index);
@@ -1317,78 +1444,109 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
                       ),
                     ),
                   ),
-                  child: Image.network(pack.trayIconUrl, width: 28, height: 28, errorBuilder: (_, __, ___) => const Icon(Icons.category, color: Colors.white)),
+                  child: isFav
+                      ? Icon(
+                          Icons.star_rounded,
+                          color: isSelected ? const Color(0xFFFF1744) : Colors.amberAccent,
+                          size: 24,
+                        )
+                      : Image.network(
+                          pack.trayIconUrl,
+                          width: 28,
+                          height: 28,
+                          errorBuilder: (_, __, ___) => const Icon(Icons.category, color: Colors.white),
+                        ),
                 ),
               );
             },
           ),
         ),
         Expanded(
-          child: totalItems == 0
-              ? Center(
+          child: isFavoritesPack && currentPack.stickers.isEmpty
+              ? const Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.sticky_note_2_outlined, size: 48, color: Colors.white24),
-                      const SizedBox(height: 10),
-                      const Text('Aún no hay stickers creados', style: TextStyle(color: Colors.white54)),
-                      if (_isSuperAdmin) ...[
-                        const SizedBox(height: 12),
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
-                          icon: const Icon(Icons.add, color: Colors.white),
-                          label: const Text('Crear Sticker ✨', style: TextStyle(color: Colors.white)),
-                          onPressed: _createStickerDialog,
-                        ),
-                      ],
+                      Icon(Icons.star_border_rounded, size: 52, color: Colors.white24),
+                      SizedBox(height: 10),
+                      Text(
+                        'No tienes stickers favoritos',
+                        style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Toca cualquier sticker en el chat\npara guardarlo en favoritos ⭐',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white38, fontSize: 12),
+                      ),
                     ],
                   ),
                 )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(8),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                  ),
-                  itemCount: totalItems,
-                  itemBuilder: (context, index) {
-                    if (_isSuperAdmin && isCustomPack && index == 0) {
-                      return InkWell(
-                        onTap: _createStickerDialog,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF1744).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFFF1744).withOpacity(0.4), width: 1.5),
-                          ),
-                          child: const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.add_photo_alternate_rounded, color: Color(0xFFFF1744), size: 28),
-                              SizedBox(height: 4),
-                              Text('Crear ✨', style: TextStyle(color: Color(0xFFFF1744), fontSize: 10, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        ),
-                      );
-                    }
-
-                    final stickerIndex = (_isSuperAdmin && isCustomPack) ? index - 1 : index;
-                    final sticker = currentPack.stickers[stickerIndex];
-
-                    return InkWell(
-                      onTap: () => widget.onStickerSelected(sticker),
-                      child: Image.network(
-                        sticker.imageUrl,
-                        fit: BoxFit.contain,
-                        cacheWidth: 150,
-                        cacheHeight: 150,
-                        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white24),
+              : totalItems == 0
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.sticky_note_2_outlined, size: 48, color: Colors.white24),
+                          const SizedBox(height: 10),
+                          const Text('Aún no hay stickers creados', style: TextStyle(color: Colors.white54)),
+                          if (_isSuperAdmin) ...[
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                              icon: const Icon(Icons.add, color: Colors.white),
+                              label: const Text('Crear Sticker ✨', style: TextStyle(color: Colors.white)),
+                              onPressed: _createStickerDialog,
+                            ),
+                          ],
+                        ],
                       ),
-                    );
-                  },
-                ),
+                    )
+                  : GridView.builder(
+                      padding: const EdgeInsets.all(8),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        mainAxisSpacing: 10,
+                        crossAxisSpacing: 10,
+                      ),
+                      itemCount: totalItems,
+                      itemBuilder: (context, index) {
+                        if (_isSuperAdmin && isCustomPack && index == 0) {
+                          return InkWell(
+                            onTap: _createStickerDialog,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFF1744).withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFFF1744).withOpacity(0.4), width: 1.5),
+                              ),
+                              child: const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.add_photo_alternate_rounded, color: Color(0xFFFF1744), size: 28),
+                                  SizedBox(height: 4),
+                                  Text('Crear ✨', style: TextStyle(color: Color(0xFFFF1744), fontSize: 10, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+
+                        final stickerIndex = (_isSuperAdmin && isCustomPack) ? index - 1 : index;
+                        final sticker = currentPack.stickers[stickerIndex];
+
+                        return InkWell(
+                          onTap: () => widget.onStickerSelected(sticker),
+                          child: Image.network(
+                            sticker.imageUrl,
+                            fit: BoxFit.contain,
+                            cacheWidth: 150,
+                            cacheHeight: 150,
+                            errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white24),
+                          ),
+                        );
+                      },
+                    ),
         ),
       ],
     );

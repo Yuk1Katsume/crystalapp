@@ -33,6 +33,7 @@ class DynamicSticker {
 
 class StickerService {
   static const String _kLocalStickersKey = 'custom_stickers_cache';
+  static const String _kFavoriteStickersKey = 'favorite_stickers_cache';
 
   /// Load custom stickers (from Supabase Storage/table + local cache)
   static Future<List<DynamicSticker>> loadCustomStickers() async {
@@ -123,6 +124,64 @@ class StickerService {
       return newSticker;
     } catch (e) {
       return null;
+    }
+  }
+
+  /// Load user's favorite stickers
+  static Future<List<DynamicSticker>> getFavoriteStickers() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonStr = prefs.getString(_kFavoriteStickersKey);
+      if (jsonStr != null) {
+        final List<dynamic> list = jsonDecode(jsonStr);
+        return list.map((e) => DynamicSticker.fromJson(e as Map<String, dynamic>)).toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  /// Check if a sticker URL is in favorites
+  static Future<bool> isFavorite(String imageUrl) async {
+    final favorites = await getFavoriteStickers();
+    return favorites.any((s) => s.imageUrl == imageUrl);
+  }
+
+  /// Add a sticker to favorites
+  static Future<void> addFavorite(String imageUrl, {String? name, String? id}) async {
+    final favorites = await getFavoriteStickers();
+    if (favorites.any((s) => s.imageUrl == imageUrl)) return;
+
+    final newFav = DynamicSticker(
+      id: id ?? 'fav_${DateTime.now().millisecondsSinceEpoch}',
+      imageUrl: imageUrl,
+      name: name,
+      createdAt: DateTime.now(),
+    );
+
+    favorites.insert(0, newFav);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kFavoriteStickersKey, jsonEncode(favorites.map((s) => s.toJson()).toList()));
+  }
+
+  /// Remove a sticker from favorites
+  static Future<void> removeFavorite(String imageUrl) async {
+    final favorites = await getFavoriteStickers();
+    favorites.removeWhere((s) => s.imageUrl == imageUrl);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kFavoriteStickersKey, jsonEncode(favorites.map((s) => s.toJson()).toList()));
+  }
+
+  /// Toggle sticker favorite status
+  static Future<bool> toggleFavorite(String imageUrl, {String? name, String? id}) async {
+    final isFav = await isFavorite(imageUrl);
+    if (isFav) {
+      await removeFavorite(imageUrl);
+      return false;
+    } else {
+      await addFavorite(imageUrl, name: name, id: id);
+      return true;
     }
   }
 }
