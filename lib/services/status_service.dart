@@ -59,8 +59,26 @@ class StatusService {
     final currentUid = user?.uid;
     if (currentUid == null || currentUid.isEmpty) return null;
 
-    final userName = user?.displayName ?? user?.phoneNumber ?? 'Usuario';
-    final userAvatar = user?.photoURL;
+    String userName = user?.displayName ?? user?.phoneNumber ?? 'Usuario';
+    String? userAvatar = user?.photoURL;
+
+    try {
+      final profile = await SupabaseConfig.client
+          .from('users')
+          .select('display_name, username, avatar_url')
+          .eq('id', currentUid)
+          .maybeSingle();
+      if (profile != null) {
+        if (profile['display_name'] != null && profile['display_name'].toString().isNotEmpty) {
+          userName = profile['display_name'];
+        } else if (profile['username'] != null && profile['username'].toString().isNotEmpty) {
+          userName = profile['username'];
+        }
+        if (profile['avatar_url'] != null && profile['avatar_url'].toString().isNotEmpty) {
+          userAvatar = profile['avatar_url'];
+        }
+      }
+    } catch (_) {}
 
     final allowedViewerIds = await getMutualAllowedViewerIds();
     final docRef = _firestore.collection('statuses').doc();

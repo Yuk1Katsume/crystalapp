@@ -50,6 +50,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   StreamSubscription? _incomingMsgSub;
   int _unreadChatCount = 0;
   bool _hasNewStatuses = false;
+  String? _myProfileAvatarUrl;
+  String? _myProfileDisplayName;
 
   @override
   void initState() {
@@ -111,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (user != null) {
       final existing = await SupabaseConfig.client
           .from('users')
-          .select('id')
+          .select('id, display_name, username, avatar_url')
           .eq('id', user.uid)
           .maybeSingle();
 
@@ -121,6 +123,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           username: 'user_${user.uid.substring(0, 5)}',
           displayName: user.phoneNumber ?? 'Usuario',
         );
+      } else {
+        if (mounted) {
+          setState(() {
+            _myProfileAvatarUrl = existing['avatar_url'];
+            _myProfileDisplayName = existing['display_name'] ?? existing['username'];
+          });
+        }
       }
     }
   }
@@ -773,6 +782,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildMyStatusCard(List<StatusItem> myStatuses) {
     final hasActiveStatuses = myStatuses.isNotEmpty;
+    final effectiveAvatarUrl = _myProfileAvatarUrl ?? currentUser?.photoURL;
+    final displayName = _myProfileDisplayName ?? currentUser?.displayName ?? 'Mi estado';
+
+    ImageProvider? bgImage;
+    Color? bgColor;
+    String? textSnippet;
+
+    if (hasActiveStatuses) {
+      final latestStatus = myStatuses.last;
+      if (latestStatus.type == 'image') {
+        try {
+          if (latestStatus.content.startsWith('http')) {
+            bgImage = NetworkImage(latestStatus.content);
+          } else {
+            bgImage = MemoryImage(base64Decode(latestStatus.content));
+          }
+        } catch (_) {}
+      } else if (latestStatus.type == 'text') {
+        if (latestStatus.backgroundColor.startsWith('#')) {
+          try {
+            final hex = latestStatus.backgroundColor.replaceAll('#', '');
+            bgColor = Color(int.parse('FF$hex', radix: 16));
+          } catch (_) {
+            bgColor = const Color(0xFFFF1744);
+          }
+        } else {
+          bgColor = const Color(0xFFFF1744);
+        }
+        textSnippet = latestStatus.content;
+      }
+    }
 
     return GestureDetector(
       onTap: () {
@@ -783,8 +823,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               builder: (_) => StatusViewScreen(
                 statusGroup: UserStatusGroup(
                   userId: currentUser?.uid ?? '',
-                  userName: 'Mi estado',
-                  userAvatarUrl: currentUser?.photoURL,
+                  userName: displayName,
+                  userAvatarUrl: effectiveAvatarUrl,
                   statuses: myStatuses,
                   lastUpdatedAt: myStatuses.last.createdAt,
                 ),
@@ -801,68 +841,163 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Container(
         width: 105,
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1E1E),
+          color: bgColor ?? const Color(0xFF1E1E1E),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: hasActiveStatuses ? const Color(0xFFFF1744) : const Color(0xFF262626),
             width: hasActiveStatuses ? 1.5 : 1.0,
           ),
+          image: bgImage != null
+              ? DecorationImage(
+                  image: bgImage,
+                  fit: BoxFit.cover,
+                  colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.35), BlendMode.darken),
+                )
+              : null,
         ),
         child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 28,
-                        backgroundColor: const Color(0xFF262626),
-                        backgroundImage: (currentUser?.photoURL != null && currentUser!.photoURL!.isNotEmpty)
-                            ? NetworkImage(currentUser!.photoURL!)
-                            : null,
-                        child: (currentUser?.photoURL == null || currentUser!.photoURL!.isEmpty)
-                            ? Text(
-                                currentUser?.displayName?.isNotEmpty == true
-                                    ? currentUser!.displayName![0].toUpperCase()
-                                    : '🌸',
-                                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                              )
-                            : null,
-                      ),
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
-                            );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFFF1744),
-                              shape: BoxShape.circle,
+            // If text status, show preview snippet in center
+            if (hasActiveStatuses && textSnippet != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(
+                    textSnippet,
+                    maxLines: 3,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                    ),
+                  ),
+                ),
+              ),
+
+            // Top-left or center avatar
+            if (hasActiveStatuses) ...[
+              // Active: Small Avatar in top-left with story ring
+              Positioned(
+                top: 10,
+                left: 10,
+                child: CustomPaint(
+                  painter: SegmentedStoryRingPainter(
+                    count: myStatuses.length,
+                    color: const Color(0xFFFF1744),
+                    strokeWidth: 2.2,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(3.0),
+                    child: CircleAvatar(
+                      radius: 17,
+                      backgroundColor: const Color(0xFF262626),
+                      backgroundImage: (effectiveAvatarUrl != null && effectiveAvatarUrl.isNotEmpty)
+                          ? NetworkImage(effectiveAvatarUrl)
+                          : null,
+                      child: (effectiveAvatarUrl == null || effectiveAvatarUrl.isEmpty)
+                          ? Text(
+                              displayName.isNotEmpty ? displayName[0].toUpperCase() : '🌸',
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                            )
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
+              // Top-right '+' button to add more statuses
+              Positioned(
+                top: 8,
+                right: 8,
+                child: GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFF1744),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.add, color: Colors.white, size: 14),
+                  ),
+                ),
+              ),
+              // Bottom Text: Mi estado (X)
+              Positioned(
+                bottom: 10,
+                left: 8,
+                right: 8,
+                child: Text(
+                  'Mi estado\n(${myStatuses.length})',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                  ),
+                ),
+              ),
+            ] else ...[
+              // Inactive: Prominent user avatar in center with '+' badge
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 28,
+                          backgroundColor: const Color(0xFF262626),
+                          backgroundImage: (effectiveAvatarUrl != null && effectiveAvatarUrl.isNotEmpty)
+                              ? NetworkImage(effectiveAvatarUrl)
+                              : null,
+                          child: (effectiveAvatarUrl == null || effectiveAvatarUrl.isEmpty)
+                              ? Text(
+                                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '🌸',
+                                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                                )
+                              : null,
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFFF1744),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.add, color: Colors.white, size: 14),
                             ),
-                            child: const Icon(Icons.add, color: Colors.white, size: 14),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Text(
-                    hasActiveStatuses ? 'Mi estado\n(${myStatuses.length})' : 'Añadir\nestado',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.2),
-                  ),
-                ],
+                      ],
+                    ),
+                    const Spacer(),
+                    const Text(
+                      'Añadir\nestado',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.2),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
