@@ -329,6 +329,8 @@ class _SearchUsersScreenState extends State<SearchUsersScreen> {
   }
 
   Widget _buildContactCard(MatchedContact contact) {
+    final hasAvatar = contact.avatarUrl != null && contact.avatarUrl!.startsWith('http');
+
     return Card(
       color: const Color(0xFF1E1E1E),
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -342,11 +344,14 @@ class _SearchUsersScreenState extends State<SearchUsersScreen> {
           children: [
             CircleAvatar(
               radius: 22,
-              backgroundColor: const Color(0xFFFF1744),
-              child: Text(
-                contact.contactName.isNotEmpty ? contact.contactName[0].toUpperCase() : '?',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-              ),
+              backgroundColor: const Color(0xFF1E1E1E),
+              backgroundImage: hasAvatar ? NetworkImage(contact.avatarUrl!) : null,
+              child: !hasAvatar
+                  ? Text(
+                      contact.contactName.isNotEmpty ? contact.contactName[0].toUpperCase() : '?',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                    )
+                  : null,
             ),
             if (contact.isOnline)
               Positioned(
@@ -419,6 +424,8 @@ class _SearchUsersScreenState extends State<SearchUsersScreen> {
     final username = uData['username'] ?? '';
     final phone = uData['phone'] ?? '';
     final uid = uData['id'] ?? uData['uid'];
+    final avatarUrl = uData['avatar_url']?.toString() ?? uData['avatarUrl']?.toString();
+    final hasAvatar = avatarUrl != null && avatarUrl.startsWith('http');
 
     return Card(
       color: const Color(0xFF1E1E1E),
@@ -428,11 +435,14 @@ class _SearchUsersScreenState extends State<SearchUsersScreen> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         leading: CircleAvatar(
           radius: 22,
-          backgroundColor: Colors.blueAccent.withOpacity(0.8),
-          child: Text(
-            name.isNotEmpty ? name[0].toUpperCase() : '?',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
+          backgroundColor: const Color(0xFF1E1E1E),
+          backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+          child: !hasAvatar
+              ? Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : '?',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                )
+              : null,
         ),
         title: Text(
           name,

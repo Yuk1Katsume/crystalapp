@@ -23,6 +23,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   List<Map<String, dynamic>> _allRegisteredUsers = [];
   final Set<String> _selectedUserIds = {};
   final Map<String, String> _selectedUserNames = {};
+  final Map<String, String?> _selectedUserAvatars = {};
 
   bool _isLoading = true;
   bool _isCreating = false;
@@ -68,14 +69,16 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     }
   }
 
-  void _toggleUser(String uid, String name) {
+  void _toggleUser(String uid, String name, String? avatarUrl) {
     setState(() {
       if (_selectedUserIds.contains(uid)) {
         _selectedUserIds.remove(uid);
         _selectedUserNames.remove(uid);
+        _selectedUserAvatars.remove(uid);
       } else {
         _selectedUserIds.add(uid);
         _selectedUserNames[uid] = name;
+        _selectedUserAvatars[uid] = avatarUrl;
       }
     });
   }
@@ -107,23 +110,32 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     final currentUid = _authService.currentUser?.uid ?? '';
     final allMembers = [currentUid, ..._selectedUserIds];
 
-    final group = await _groupService.createGroup(
-      name: name,
-      memberIds: allMembers,
-    );
+    try {
+      final group = await _groupService.createGroup(
+        name: name,
+        memberIds: allMembers,
+      );
 
-    if (mounted) {
-      setState(() => _isCreating = false);
-      if (group != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ChatScreen(groupId: group.id, groupName: group.name),
-          ),
-        );
-      } else {
+      if (mounted) {
+        setState(() => _isCreating = false);
+        if (group != null) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChatScreen(groupId: group.id, groupName: group.name),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Error al crear el grupo. Inténtalo de nuevo.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isCreating = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error al crear el grupo. Inténtalo de nuevo.')),
+          SnackBar(content: Text('Error al crear grupo: $e')),
         );
       }
     }
@@ -161,10 +173,10 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                   color: const Color(0xFF141414),
                   child: Row(
                     children: [
-                      CircleAvatar(
+                      const CircleAvatar(
                         radius: 26,
                         backgroundColor: Colors.deepPurpleAccent,
-                        child: const Icon(Icons.group_rounded, color: Colors.white, size: 28),
+                        child: Icon(Icons.group_rounded, color: Colors.white, size: 28),
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -194,6 +206,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                       scrollDirection: Axis.horizontal,
                       children: _selectedUserIds.map((uid) {
                         final name = _selectedUserNames[uid] ?? 'Usuario';
+                        final avatarUrl = _selectedUserAvatars[uid];
+                        final hasValidAvatar = avatarUrl != null && avatarUrl.toString().startsWith('http');
+
                         return Container(
                           margin: const EdgeInsets.only(right: 10),
                           child: Column(
@@ -203,17 +218,20 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                                 children: [
                                   CircleAvatar(
                                     radius: 20,
-                                    backgroundColor: const Color(0xFFFF1744),
-                                    child: Text(
-                                      name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                    ),
+                                    backgroundColor: const Color(0xFF1E1E1E),
+                                    backgroundImage: hasValidAvatar ? NetworkImage(avatarUrl) : null,
+                                    child: !hasValidAvatar
+                                        ? Text(
+                                            name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                          )
+                                        : null,
                                   ),
                                   Positioned(
                                     top: -4,
                                     right: -4,
                                     child: GestureDetector(
-                                      onTap: () => _toggleUser(uid, name),
+                                      onTap: () => _toggleUser(uid, name, avatarUrl),
                                       child: const CircleAvatar(
                                         radius: 9,
                                         backgroundColor: Colors.white70,
@@ -280,16 +298,22 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                         }).map((c) {
                           final uid = c.appUserId!;
                           final isSelected = _selectedUserIds.contains(uid);
+                          final hasAvatar = c.avatarUrl != null && c.avatarUrl!.startsWith('http');
+
                           return CheckboxListTile(
                             activeColor: const Color(0xFFFF1744),
                             checkColor: Colors.white,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                             secondary: CircleAvatar(
-                              backgroundColor: const Color(0xFFFF1744),
-                              child: Text(
-                                c.contactName.isNotEmpty ? c.contactName[0].toUpperCase() : '?',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              ),
+                              radius: 20,
+                              backgroundColor: const Color(0xFF1E1E1E),
+                              backgroundImage: hasAvatar ? NetworkImage(c.avatarUrl!) : null,
+                              child: !hasAvatar
+                                  ? Text(
+                                      c.contactName.isNotEmpty ? c.contactName[0].toUpperCase() : '?',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                    )
+                                  : null,
                             ),
                             title: Row(
                               children: [
@@ -318,7 +342,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                               style: const TextStyle(color: Colors.white54, fontSize: 12),
                             ),
                             value: isSelected,
-                            onChanged: (_) => _toggleUser(uid, c.contactName),
+                            onChanged: (_) => _toggleUser(uid, c.contactName, c.avatarUrl),
                           );
                         }).toList(),
                         const Divider(color: Colors.white12, height: 24),
@@ -349,6 +373,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                         final name = u['display_name'] ?? u['username'] ?? 'Usuario';
                         final username = u['username'] ?? '';
                         final phone = u['phone'] ?? '';
+                        final avatarUrl = u['avatar_url']?.toString();
+                        final hasAvatar = avatarUrl != null && avatarUrl.startsWith('http');
                         final isSelected = _selectedUserIds.contains(uid);
 
                         return CheckboxListTile(
@@ -356,11 +382,15 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                           checkColor: Colors.white,
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                           secondary: CircleAvatar(
-                            backgroundColor: Colors.blueAccent.withOpacity(0.8),
-                            child: Text(
-                              name.isNotEmpty ? name[0].toUpperCase() : '?',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                            ),
+                            radius: 20,
+                            backgroundColor: const Color(0xFF1E1E1E),
+                            backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+                            child: !hasAvatar
+                                ? Text(
+                                    name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                  )
+                                : null,
                           ),
                           title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
                           subtitle: Text(
@@ -368,7 +398,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                             style: const TextStyle(color: Colors.white54, fontSize: 12),
                           ),
                           value: isSelected,
-                          onChanged: (_) => _toggleUser(uid, name),
+                          onChanged: (_) => _toggleUser(uid, name, avatarUrl),
                         );
                       }).toList(),
                     ],
