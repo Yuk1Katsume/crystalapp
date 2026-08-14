@@ -58,9 +58,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
   }
 
   void _listenToCallStatus() {
-    _callSignalSub = _callService.getCallStream(widget.callId).listen((doc) {
-      if (!doc.exists) return;
-      final data = doc.data() ?? {};
+    _callSignalSub = _callService.getCallStream(widget.callId).listen((data) {
       final status = data['status'] as String?;
 
       if (status == 'ended' || status == 'rejected') {

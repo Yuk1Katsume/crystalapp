@@ -73,9 +73,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
   }
 
   void _listenToCallSignals() {
-    _callStreamSub = _callService.getCallStream(widget.callId).listen((doc) async {
-      if (!doc.exists) return;
-      final data = doc.data() ?? {};
+    _callStreamSub = _callService.getCallStream(widget.callId).listen((data) async {
       final status = data['status'] as String?;
 
       if (status == 'connected' && !_isConnected) {

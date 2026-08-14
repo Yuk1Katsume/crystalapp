@@ -22,6 +22,7 @@ class StatusService {
   /// Computes mutual allowed viewer IDs:
   /// 1. Bilateral active conversations (users with direct message history in SQLite or Supabase).
   /// 2. Registered contacts from device address book.
+  /// 3. Registered app users.
   Future<List<String>> getMutualAllowedViewerIds() async {
     final currentUid = _auth.currentUser?.uid;
     if (currentUid == null || currentUid.isEmpty) return [];
@@ -65,6 +66,17 @@ class StatusService {
       for (final c in registered) {
         if (c.appUserId != null && c.appUserId!.isNotEmpty && c.appUserId != currentUid) {
           allowedIds.add(c.appUserId!);
+        }
+      }
+    } catch (_) {}
+
+    // 4. All known contacts in directory
+    try {
+      final users = await SupabaseConfig.client.from('users').select('id').limit(200);
+      for (final u in users) {
+        final uid = u['id']?.toString();
+        if (uid != null && uid.isNotEmpty && uid != currentUid) {
+          allowedIds.add(uid);
         }
       }
     } catch (_) {}
@@ -130,12 +142,7 @@ class StatusService {
       expiresAt: expiresAt,
     );
 
-    // 1. Save to Firestore with timeout
-    try {
-      await docRef.set(status.toJson()).timeout(const Duration(seconds: 4));
-    } catch (_) {}
-
-    // 2. Persist to Supabase statuses table
+    // 1. Save to Supabase FIRST (instant real-time broadcast)
     try {
       await SupabaseConfig.client.from('statuses').upsert({
         'id': status.id,
@@ -153,62 +160,55 @@ class StatusService {
       }).timeout(const Duration(seconds: 4));
     } catch (_) {}
 
+    // 2. Save to Firestore
+    try {
+      await docRef.set(status.toJson()).timeout(const Duration(seconds: 4));
+    } catch (_) {}
+
     return status;
   }
 
-  /// Real-time stream of contact status updates (only active, non-expired, and allowed for current user)
+  /// Real-time stream of contact status updates combining Supabase + Firestore
   Stream<List<UserStatusGroup>> getRecentStatusesStream() {
     final currentUid = _auth.currentUser?.uid ?? '';
     if (currentUid.isEmpty) return Stream.value([]);
 
-    // Trigger background cleanup of expired statuses
     pruneExpiredStatuses();
 
-    return _firestore
-        .collection('statuses')
-        .snapshots()
-        .map((snapshot) {
+    final controller = StreamController<List<UserStatusGroup>>.broadcast();
+    final Map<String, StatusItem> statusesMap = {};
+
+    void processAndEmit() {
       final now = DateTime.now();
       final validStatuses = <StatusItem>[];
 
-      for (final doc in snapshot.docs) {
-        try {
-          final data = doc.data();
-          final status = StatusItem.fromJson(data);
+      for (final status in statusesMap.values) {
+        if (status.expiresAt.isBefore(now)) continue;
+        if (status.userId == currentUid) continue;
 
-          // Only keep if not expired (strict 24h cycle)
-          if (status.expiresAt.isBefore(now)) continue;
+        if (status.allowedViewerIds.isEmpty || status.allowedViewerIds.contains(currentUid)) {
+          final decryptedContent = E2EEService.decryptPayload(status.content, _statusSecretSalt);
+          final decryptedCaption = status.caption != null
+              ? E2EEService.decryptPayload(status.caption!, _statusSecretSalt)
+              : null;
 
-          // Exclude own statuses (handled separately)
-          if (status.userId == currentUid) continue;
-
-          // Check if current user is in allowed viewers list or public mutual
-          if (status.allowedViewerIds.isEmpty || status.allowedViewerIds.contains(currentUid)) {
-            // Decrypt content
-            final decryptedContent = E2EEService.decryptPayload(status.content, _statusSecretSalt);
-            final decryptedCaption = status.caption != null
-                ? E2EEService.decryptPayload(status.caption!, _statusSecretSalt)
-                : null;
-
-            validStatuses.add(StatusItem(
-              id: status.id,
-              userId: status.userId,
-              userName: status.userName,
-              userAvatarUrl: status.userAvatarUrl,
-              type: status.type,
-              content: decryptedContent,
-              caption: decryptedCaption,
-              backgroundColor: status.backgroundColor,
-              allowedViewerIds: status.allowedViewerIds,
-              viewedByUserIds: status.viewedByUserIds,
-              createdAt: status.createdAt,
-              expiresAt: status.expiresAt,
-            ));
-          }
-        } catch (_) {}
+          validStatuses.add(StatusItem(
+            id: status.id,
+            userId: status.userId,
+            userName: status.userName,
+            userAvatarUrl: status.userAvatarUrl,
+            type: status.type,
+            content: decryptedContent,
+            caption: decryptedCaption,
+            backgroundColor: status.backgroundColor,
+            allowedViewerIds: status.allowedViewerIds,
+            viewedByUserIds: status.viewedByUserIds,
+            createdAt: status.createdAt,
+            expiresAt: status.expiresAt,
+          ));
+        }
       }
 
-      // Group statuses by user
       final grouped = <String, List<StatusItem>>{};
       for (final s in validStatuses) {
         grouped.putIfAbsent(s.userId, () => []).add(s);
@@ -227,7 +227,6 @@ class StatusService {
         ));
       }
 
-      // Sort contact groups with unread statuses first, then by last updated
       result.sort((a, b) {
         final aUnread = a.hasUnread(currentUid);
         final bUnread = b.hasUnread(currentUid);
@@ -236,54 +235,149 @@ class StatusService {
         return b.lastUpdatedAt.compareTo(a.lastUpdatedAt);
       });
 
-      return result;
-    });
+      if (!controller.isClosed) {
+        controller.add(result);
+      }
+    }
+
+    // 1. Listen to Supabase Stream
+    StreamSubscription? supaSub;
+    try {
+      supaSub = SupabaseConfig.client
+          .from('statuses')
+          .stream(primaryKey: ['id'])
+          .listen((data) {
+            for (final row in data) {
+              try {
+                final item = StatusItem.fromJson(Map<String, dynamic>.from(row));
+                statusesMap[item.id] = item;
+              } catch (_) {}
+            }
+            processAndEmit();
+          }, onError: (_) {});
+    } catch (_) {}
+
+    // 2. Listen to Firestore Stream
+    StreamSubscription? fireSub;
+    try {
+      fireSub = _firestore.collection('statuses').snapshots().listen((snap) {
+        for (final doc in snap.docs) {
+          try {
+            final item = StatusItem.fromJson(doc.data());
+            statusesMap[item.id] = item;
+          } catch (_) {}
+        }
+        processAndEmit();
+      }, onError: (_) {});
+    } catch (_) {}
+
+    // Initial fetch from Supabase
+    SupabaseConfig.client
+        .from('statuses')
+        .select()
+        .gt('expires_at', DateTime.now().toIso8601String())
+        .then((rows) {
+          for (final row in rows) {
+            try {
+              final item = StatusItem.fromJson(Map<String, dynamic>.from(row));
+              statusesMap[item.id] = item;
+            } catch (_) {}
+          }
+          processAndEmit();
+        }).catchError((_) {});
+
+    controller.onCancel = () {
+      supaSub?.cancel();
+      fireSub?.cancel();
+    };
+
+    return controller.stream;
   }
 
-  /// Real-time stream of current user's own active statuses
+  /// Real-time stream of current user's own active statuses across Supabase + Firestore
   Stream<List<StatusItem>> getMyStatusesStream() {
     final currentUid = _auth.currentUser?.uid ?? '';
     if (currentUid.isEmpty) return Stream.value([]);
 
-    return _firestore
-        .collection('statuses')
-        .where('user_id', isEqualTo: currentUid)
-        .snapshots()
-        .map((snapshot) {
+    final controller = StreamController<List<StatusItem>>.broadcast();
+    final Map<String, StatusItem> myStatusesMap = {};
+
+    void processAndEmit() {
       final now = DateTime.now();
       final myStatuses = <StatusItem>[];
 
-      for (final doc in snapshot.docs) {
-        try {
-          final data = doc.data();
-          final status = StatusItem.fromJson(data);
-          if (status.expiresAt.isAfter(now)) {
-            final decryptedContent = E2EEService.decryptPayload(status.content, _statusSecretSalt);
-            final decryptedCaption = status.caption != null
-                ? E2EEService.decryptPayload(status.caption!, _statusSecretSalt)
-                : null;
+      for (final status in myStatusesMap.values) {
+        if (status.userId == currentUid && status.expiresAt.isAfter(now)) {
+          final decryptedContent = E2EEService.decryptPayload(status.content, _statusSecretSalt);
+          final decryptedCaption = status.caption != null
+              ? E2EEService.decryptPayload(status.caption!, _statusSecretSalt)
+              : null;
 
-            myStatuses.add(StatusItem(
-              id: status.id,
-              userId: status.userId,
-              userName: status.userName,
-              userAvatarUrl: status.userAvatarUrl,
-              type: status.type,
-              content: decryptedContent,
-              caption: decryptedCaption,
-              backgroundColor: status.backgroundColor,
-              allowedViewerIds: status.allowedViewerIds,
-              viewedByUserIds: status.viewedByUserIds,
-              createdAt: status.createdAt,
-              expiresAt: status.expiresAt,
-            ));
-          }
-        } catch (_) {}
+          myStatuses.add(StatusItem(
+            id: status.id,
+            userId: status.userId,
+            userName: status.userName,
+            userAvatarUrl: status.userAvatarUrl,
+            type: status.type,
+            content: decryptedContent,
+            caption: decryptedCaption,
+            backgroundColor: status.backgroundColor,
+            allowedViewerIds: status.allowedViewerIds,
+            viewedByUserIds: status.viewedByUserIds,
+            createdAt: status.createdAt,
+            expiresAt: status.expiresAt,
+          ));
+        }
       }
 
       myStatuses.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return myStatuses;
-    });
+      if (!controller.isClosed) {
+        controller.add(myStatuses);
+      }
+    }
+
+    // 1. Supabase Stream
+    StreamSubscription? supaSub;
+    try {
+      supaSub = SupabaseConfig.client
+          .from('statuses')
+          .stream(primaryKey: ['id'])
+          .eq('user_id', currentUid)
+          .listen((data) {
+            for (final row in data) {
+              try {
+                final item = StatusItem.fromJson(Map<String, dynamic>.from(row));
+                myStatusesMap[item.id] = item;
+              } catch (_) {}
+            }
+            processAndEmit();
+          }, onError: (_) {});
+    } catch (_) {}
+
+    // 2. Firestore Stream
+    StreamSubscription? fireSub;
+    try {
+      fireSub = _firestore
+          .collection('statuses')
+          .where('user_id', isEqualTo: currentUid)
+          .snapshots()
+          .listen((snap) {
+            for (final doc in snap.docs) {
+              try {
+                final item = StatusItem.fromJson(doc.data());
+                myStatusesMap[item.id] = item;
+              } catch (_) {}
+            }
+            processAndEmit();
+          }, onError: (_) {});
+    } catch (_) {}
+
+    controller.onCancel = () {
+      supaSub?.cancel();
+      fireSub?.cancel();
+    };
+
+    return controller.stream;
   }
 
   /// Mark status as viewed by current user
@@ -323,9 +417,9 @@ class StatusService {
   Future<void> deleteStatus(String statusId) async {
     try {
       await _firestore.collection('statuses').doc(statusId).delete();
-      try {
-        await SupabaseConfig.client.from('statuses').delete().eq('id', statusId);
-      } catch (_) {}
+    } catch (_) {}
+    try {
+      await SupabaseConfig.client.from('statuses').delete().eq('id', statusId);
     } catch (_) {}
   }
 }
