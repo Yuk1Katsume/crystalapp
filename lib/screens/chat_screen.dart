@@ -142,6 +142,115 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   bool _initialScrollDone = false;
   Message? _replyingToMessage;
   Message? _editingMessage;
+  
+  Future<void> _showStickerOptionsSheet(Message msg) async {
+    if (msg.mediaUrl == null) return;
+    final isFav = await StickerService.isFavorite(msg.mediaUrl!);
+
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161616),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Image.network(
+                msg.mediaUrl!,
+                width: 110,
+                height: 110,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 60, color: Colors.white38),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: Icon(
+                  isFav ? Icons.star_rounded : Icons.star_border_rounded,
+                  color: isFav ? const Color(0xFFFF1744) : Colors.white,
+                ),
+                title: Text(
+                  isFav ? 'Eliminar de favoritos' : 'Añadir a favoritos ⭐',
+                  style: TextStyle(color: isFav ? const Color(0xFFFF1744) : Colors.white, fontWeight: FontWeight.bold),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final nowFav = await StickerService.toggleFavorite(msg.mediaUrl!);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: const Color(0xFF1E1E1E),
+                        content: Text(
+                          nowFav ? 'Sticker añadido a favoritos ⭐' : 'Sticker eliminado de favoritos',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  msg.isStarred ? Icons.star_rounded : Icons.star_border_rounded,
+                  color: msg.isStarred ? const Color(0xFFFF1744) : Colors.white,
+                ),
+                title: Text(
+                  msg.isStarred ? 'Quitar de destacados' : 'Destacar mensaje ⭐️',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _localDb.toggleStarredMessage(msg.id, !msg.isStarred);
+                  if (!msg.isStarred) {
+                    await StickerService.addFavorite(msg.mediaUrl!);
+                  }
+                  _refreshMessages();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.forward_rounded, color: Colors.white),
+                title: const Text('Reenviar sticker', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _selectedMessages.clear();
+                  _selectedMessages.add(msg);
+                  _forwardSelectedMessages();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _recipientIsOnline = false;
+
+  void _subscribeToPresence() {
+    if (isGroup || widget.recipientId == null) return;
+    SupabaseConfig.client
+        .from('users')
+        .stream(primaryKey: ['id'])
+        .eq('id', widget.recipientId!)
+        .listen((data) {
+          if (data.isNotEmpty && mounted) {
+            setState(() {
+              _recipientIsOnline = data.first['is_online'] ?? false;
+            });
+          }
+        });
+  }
+
   final StreamController<List<Message>> _uiStreamController = StreamController<List<Message>>.broadcast();
   StreamSubscription<List<Message>>? _sub;
 
@@ -255,116 +364,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _refreshMessages();
   }
 
-  Future<void> _showStickerOptionsSheet(Message msg) async {
-    if (msg.mediaUrl == null) return;
-    final isFav = await StickerService.isFavorite(msg.mediaUrl!);
-
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF161616),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              Image.network(
-                msg.mediaUrl!,
-                width: 110,
-                height: 110,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 60, color: Colors.white38),
-              ),
-              const SizedBox(height: 10),
-              ListTile(
-                leading: Icon(
-                  isFav ? Icons.star_rounded : Icons.star_border_rounded,
-                  color: isFav ? const Color(0xFFFF1744) : Colors.white,
-                ),
-                title: Text(
-                  isFav ? 'Eliminar de favoritos' : 'Añadir a favoritos ⭐',
-                  style: TextStyle(color: isFav ? const Color(0xFFFF1744) : Colors.white, fontWeight: FontWeight.bold),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final nowFav = await StickerService.toggleFavorite(msg.mediaUrl!);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: const Color(0xFF1E1E1E),
-                        content: Text(
-                          nowFav ? 'Sticker añadido a favoritos ⭐' : 'Sticker eliminado de favoritos',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    );
-                  }
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  msg.isStarred ? Icons.star_rounded : Icons.star_border_rounded,
-                  color: msg.isStarred ? const Color(0xFFFF1744) : Colors.white,
-                ),
-                title: Text(
-                  msg.isStarred ? 'Quitar de destacados' : 'Destacar mensaje ⭐️',
-                  style: const TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _localDb.toggleStarredMessage(msg.id, !msg.isStarred);
-                  if (!msg.isStarred) {
-                    await StickerService.addFavorite(msg.mediaUrl!);
-                  }
-                  _refreshMessages();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.forward_rounded, color: Colors.white),
-                title: const Text('Reenviar sticker', style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _selectedMessages.clear();
-                  _selectedMessages.add(msg);
-                  _forwardSelectedMessages();
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  bool _recipientIsOnline = false;
-
-  void _subscribeToPresence() {
-    if (isGroup || widget.recipientId == null) return;
-    SupabaseConfig.client
-        .from('users')
-        .stream(primaryKey: ['id'])
-        .eq('id', widget.recipientId!)
-        .listen((data) {
-          if (data.isNotEmpty && mounted) {
-            setState(() {
-              _recipientIsOnline = data.first['is_online'] ?? false;
-            });
-          }
-        });
-  }
-
   void _fetchRecipientAvatar() async {
-    if (isGroup || widget.recipientId == null) return;
+    if (isGroup && widget.groupId != null) {
+      try {
+        final grp = await _groupService.getGroupDetails(widget.groupId!);
+        if (grp != null && grp.iconUrl != null && grp.iconUrl!.isNotEmpty && mounted) {
+          setState(() {
+            _recipientAvatarUrl = grp.iconUrl;
+          });
+        }
+      } catch (_) {}
+      return;
+    }
+    if (widget.recipientId == null) return;
     try {
       final res = await SupabaseConfig.client
           .from('users')
@@ -382,7 +394,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       // Ignore
     }
   }
-
 
   void _toggleMessageSelection(Message msg) {
     setState(() {
@@ -479,7 +490,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final isSingleTextMessage = singleSelected != null && singleSelected.type == ChatMessageType.text;
     final allSelectedAreStarred = _selectedMessages.isNotEmpty && _selectedMessages.every((m) => m.isStarred);
 
-    final pickerHeight = _keyboardHeight < 300 ? 320.0 : _keyboardHeight;
+    final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+    final pickerHeight = (_keyboardHeight < 300 ? 320.0 : _keyboardHeight) + bottomPadding;
 
     return PopScope(
       canPop: !_isPickerVisible && _selectedMessages.isEmpty && !_focusNode.hasFocus,
@@ -546,9 +558,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 foregroundColor: Colors.white,
                 titleSpacing: 0,
                 title: InkWell(
-                  onTap: () {
+                  onTap: () async {
                     if (isGroup && widget.groupId != null) {
-                      Navigator.push(
+                      await Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => GroupInfoScreen(
@@ -557,8 +569,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                           ),
                         ),
                       );
+                      _fetchRecipientAvatar();
                     } else if (!isGroup && widget.recipientId != null) {
-                      Navigator.push(
+                      await Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => UserProfileScreen(
@@ -568,6 +581,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                           ),
                         ),
                       );
+                      _fetchRecipientAvatar();
                     }
                   },
                   child: Padding(
@@ -577,14 +591,16 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         CircleAvatar(
                           radius: 18,
                           backgroundColor: const Color(0xFF1E1E1E),
-                          backgroundImage: (_recipientAvatarUrl != null && _recipientAvatarUrl!.startsWith('http'))
+                          backgroundImage: (_recipientAvatarUrl != null && _recipientAvatarUrl!.isNotEmpty && _recipientAvatarUrl!.startsWith('http'))
                               ? NetworkImage(_recipientAvatarUrl!)
                               : null,
-                          child: (_recipientAvatarUrl == null || !_recipientAvatarUrl!.startsWith('http'))
-                              ? Text(
-                                  title.isNotEmpty ? title[0].toUpperCase() : '?',
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                                )
+                          child: (_recipientAvatarUrl == null || _recipientAvatarUrl!.isEmpty || !_recipientAvatarUrl!.startsWith('http'))
+                              ? (isGroup
+                                  ? const Icon(Icons.groups_rounded, color: Colors.white70, size: 20)
+                                  : Text(
+                                      title.isNotEmpty ? title[0].toUpperCase() : '?',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                    ))
                               : null,
                         ),
                         const SizedBox(width: 10),
@@ -1113,11 +1129,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void _showAttachmentMenu() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF161616),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      backgroundColor: const Color(0xFF1F2428),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1125,20 +1141,21 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 child: Container(
                   width: 38,
                   height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
+                  margin: const EdgeInsets.only(bottom: 24),
                   decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
                 ),
               ),
+              // Row 1: Documento, Cámara, Galería
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _buildAttachmentOption(
-                    icon: Icons.photo_library_rounded,
-                    label: 'Galería',
-                    color: const Color(0xFFAB47BC),
+                    icon: Icons.insert_drive_file_rounded,
+                    label: 'Documento',
+                    color: const Color(0xFF7F66FF),
                     onTap: () {
                       Navigator.pop(ctx);
-                      _sendImage(source: ImageSource.gallery);
+                      _sendDocument();
                     },
                   ),
                   _buildAttachmentOption(
@@ -1151,16 +1168,51 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     },
                   ),
                   _buildAttachmentOption(
-                    icon: Icons.sticky_note_2_rounded,
-                    label: 'Stickers',
-                    color: const Color(0xFF00E5FF),
+                    icon: Icons.photo_library_rounded,
+                    label: 'Galería',
+                    color: const Color(0xFFAC44CF),
                     onTap: () {
                       Navigator.pop(ctx);
-                      _togglePicker();
+                      _sendImage(source: ImageSource.gallery);
                     },
                   ),
                 ],
               ),
+              const SizedBox(height: 24),
+              // Row 2: Ubicación, Contacto, Encuesta
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildAttachmentOption(
+                    icon: Icons.location_on_rounded,
+                    label: 'Ubicación',
+                    color: const Color(0xFF00C853),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _showLocationNotice();
+                    },
+                  ),
+                  _buildAttachmentOption(
+                    icon: Icons.person_rounded,
+                    label: 'Contacto',
+                    color: const Color(0xFF00A3FF),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _showShareContactSheet();
+                    },
+                  ),
+                  _buildAttachmentOption(
+                    icon: Icons.poll_rounded,
+                    label: 'Encuesta',
+                    color: const Color(0xFFFFB300),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _showCreatePollDialog();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
             ],
           ),
         ),
@@ -1181,11 +1233,133 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         children: [
           CircleAvatar(
             radius: 28,
-            backgroundColor: color.withOpacity(0.18),
+            backgroundColor: color.withOpacity(0.2),
             child: Icon(icon, color: color, size: 28),
           ),
           const SizedBox(height: 8),
           Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  void _sendDocument() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Color(0xFF1E1E1E),
+        behavior: SnackBarBehavior.floating,
+        content: Text('Envío de documentos cifrados (PDF/DOCX) próximamente 📄', style: TextStyle(color: Colors.white)),
+      ),
+    );
+  }
+
+  void _showLocationNotice() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Color(0xFF1E1E1E),
+        behavior: SnackBarBehavior.floating,
+        content: Text('Compartir ubicación en tiempo real estará disponible próximamente 📍', style: TextStyle(color: Colors.white)),
+      ),
+    );
+  }
+
+  void _showShareContactSheet() async {
+    final targetUser = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+    );
+    if (targetUser != null && mounted) {
+      final name = targetUser['display_name'] ?? targetUser['username'] ?? 'Contacto';
+      final phone = targetUser['phone_number'] ?? '';
+      final msgText = '👤 Contacto: $name\n📞 $phone';
+      if (isGroup) {
+        await _groupService.sendGroupMessage(groupId: widget.groupId!, text: msgText);
+      } else if (widget.recipientId != null) {
+        await _chatService.sendDirectMessage(recipientId: widget.recipientId!, text: msgText);
+      }
+      _refreshMessages();
+      _scrollToBottom();
+    }
+  }
+
+  void _showCreatePollDialog() {
+    final questionCtrl = TextEditingController();
+    final opt1Ctrl = TextEditingController();
+    final opt2Ctrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.poll_rounded, color: Color(0xFFFFB300)),
+            SizedBox(width: 8),
+            Text('Crear Encuesta 📊', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: questionCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Pregunta',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFF1744))),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: opt1Ctrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Opción 1',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFF1744))),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: opt2Ctrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Opción 2',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFF1744))),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+            onPressed: () async {
+              final q = questionCtrl.text.trim();
+              final o1 = opt1Ctrl.text.trim();
+              final o2 = opt2Ctrl.text.trim();
+              if (q.isEmpty || o1.isEmpty || o2.isEmpty) return;
+
+              Navigator.pop(ctx);
+              final pollText = '📊 *Encuesta:* $q\n\n1️⃣ $o1\n2️⃣ $o2';
+              if (isGroup) {
+                await _groupService.sendGroupMessage(groupId: widget.groupId!, text: pollText);
+              } else if (widget.recipientId != null) {
+                await _chatService.sendDirectMessage(recipientId: widget.recipientId!, text: pollText);
+              }
+              _refreshMessages();
+              _scrollToBottom();
+            },
+            child: const Text('Crear Encuesta', style: TextStyle(color: Colors.white)),
+          ),
         ],
       ),
     );
@@ -1427,42 +1601,51 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFF161616),
+      color: const Color(0xFF121212),
       child: Column(
         children: [
           Expanded(
-            child: TabBarView(
-              controller: _mainTabController,
-              children: [
-                _buildEmojiView(),
-                const Center(child: Text('Buscador de GIFs', style: TextStyle(color: Colors.white54))),
-                _buildStickerView(),
-              ],
+            child: Container(
+              color: const Color(0xFF161616),
+              child: TabBarView(
+                controller: _mainTabController,
+                children: [
+                  _buildEmojiView(),
+                  const Center(child: Text('Buscador de GIFs', style: TextStyle(color: Colors.white54))),
+                  _buildStickerView(),
+                ],
+              ),
             ),
           ),
           Container(
-            height: 48,
             color: const Color(0xFF121212),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TabBar(
-                    controller: _mainTabController,
-                    indicatorColor: const Color(0xFFFF1744),
-                    labelColor: const Color(0xFFFF1744),
-                    unselectedLabelColor: Colors.white54,
-                    tabs: const [
-                      Tab(icon: Icon(Icons.emoji_emotions_outlined)),
-                      Tab(child: Text('GIF', style: TextStyle(fontWeight: FontWeight.bold))),
-                      Tab(icon: Icon(Icons.sticky_note_2_outlined)),
-                    ],
-                  ),
+            child: SafeArea(
+              top: false,
+              bottom: true,
+              child: SizedBox(
+                height: 48,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TabBar(
+                        controller: _mainTabController,
+                        indicatorColor: const Color(0xFFFF1744),
+                        labelColor: const Color(0xFFFF1744),
+                        unselectedLabelColor: Colors.white54,
+                        tabs: const [
+                          Tab(icon: Icon(Icons.emoji_emotions_outlined)),
+                          Tab(child: Text('GIF', style: TextStyle(fontWeight: FontWeight.bold))),
+                          Tab(icon: Icon(Icons.sticky_note_2_outlined)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.backspace_outlined, color: Colors.white60),
+                      onPressed: widget.onBackspace,
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.backspace_outlined, color: Colors.white60),
-                  onPressed: widget.onBackspace,
-                ),
-              ],
+              ),
             ),
           ),
         ],
