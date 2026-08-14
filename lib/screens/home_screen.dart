@@ -1,17 +1,22 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/message_model.dart';
+import '../models/status_model.dart';
 import '../services/group_chat_service.dart';
 import '../services/auth_service.dart';
 import '../services/local_database_service.dart';
 import '../services/supabase_config.dart';
 import '../services/chat_service.dart';
+import '../services/status_service.dart';
 import 'chat_screen.dart';
 import 'search_users_screen.dart';
 import 'create_group_screen.dart';
+import 'create_status_screen.dart';
+import 'status_view_screen.dart';
 import 'settings_screen.dart';
 import '../services/update_service.dart';
 import '../services/contacts_service.dart';
@@ -36,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final GroupChatService _groupService = GroupChatService();
   final AuthService _authService = AuthService();
   final ChatService _chatService = ChatService();
+  final StatusService _statusService = StatusService();
   final LocalDatabaseService _localDb = LocalDatabaseService();
   final ContactsServiceManager _contactsService = ContactsServiceManager();
   final currentUser = FirebaseAuth.instance.currentUser;
@@ -209,11 +215,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             icon: const Icon(Icons.camera_alt_outlined, color: Colors.white70),
             tooltip: 'Cámara',
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Abre la cámara desde cualquier conversación para enviar fotos.'),
-                  backgroundColor: Color(0xFF1E1E1E),
-                ),
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
               );
             },
           ),
@@ -625,160 +629,184 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // ==========================================
-  // TAB 1: ESTADOS (Matching WhatsApp Novedades UI)
+  // TAB 1: ESTADOS (Real Data & E2EE Stories Only)
   // ==========================================
   Widget _buildStatusTab() {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      children: [
-        // Top Novedades Header
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Novedades',
-              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            Row(
+    final currentUid = currentUser?.uid ?? '';
+
+    return StreamBuilder<List<StatusItem>>(
+      stream: _statusService.getMyStatusesStream(),
+      builder: (context, myStatusesSnap) {
+        final myStatuses = myStatusesSnap.data ?? [];
+
+        return StreamBuilder<List<UserStatusGroup>>(
+          stream: _statusService.getRecentStatusesStream(),
+          builder: (context, contactGroupsSnap) {
+            final contactGroups = contactGroupsSnap.data ?? [];
+
+            // Update badge state
+            final hasUnreadStatuses = contactGroups.any((g) => g.hasUnread(currentUid));
+            if (hasUnreadStatuses != _hasNewStatuses && mounted) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _hasNewStatuses = hasUnreadStatuses);
+              });
+            }
+
+            return ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               children: [
-                IconButton(
-                  icon: const Icon(Icons.search_rounded, color: Colors.white70),
-                  onPressed: () {},
+                // Top Novedades Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Novedades',
+                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                    ),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.search_rounded, color: Colors.white70),
+                          onPressed: () {},
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
+                          onPressed: () {},
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
-                  onPressed: () {},
+                const SizedBox(height: 8),
+
+                // Section: Estados Header
+                const Text(
+                  'Estados',
+                  style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.bold),
                 ),
+                const SizedBox(height: 14),
+
+                // Horizontal scrollable story cards
+                SizedBox(
+                  height: 160,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: 1 + contactGroups.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return _buildMyStatusCard(myStatuses);
+                      }
+                      final group = contactGroups[index - 1];
+                      return _buildContactStoryCard(group);
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Section: Contactos con estados
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Actualizaciones recientes',
+                      style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.bold),
+                    ),
+                    if (contactGroups.isNotEmpty)
+                      Text(
+                        '${contactGroups.length}',
+                        style: const TextStyle(color: Colors.white38, fontSize: 13),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+
+                // If no contact statuses yet, show clean state
+                if (contactGroups.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
+                    alignment: Alignment.center,
+                    child: Column(
+                      children: [
+                        Icon(Icons.donut_large_rounded, size: 52, color: Colors.white.withOpacity(0.2)),
+                        const SizedBox(height: 14),
+                        const Text(
+                          'No hay actualizaciones recientes',
+                          style: TextStyle(color: Colors.white60, fontSize: 15, fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Los estados que compartan tus contactos mutuos aparecerán aquí con cifrado de extremo a extremo.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white30, fontSize: 12, height: 1.3),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  // Real Contact Status List with Segmented Story Rings
+                  ...contactGroups.map((group) => _buildContactStatusTile(group)),
+
+                const SizedBox(height: 20),
+                Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.lock_rounded, size: 14, color: Colors.white30),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Tus estados están protegidos con cifrado E2EE',
+                        style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 80),
               ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-
-        // Section: Estados (Horizontal scrollable story cards)
-        const Text(
-          'Estados',
-          style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 14),
-
-        SizedBox(
-          height: 160,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              // "Añadir estado" Card
-              _buildAddStatusCard(),
-              const SizedBox(width: 10),
-              // Sample / Contact Story Cards
-              _buildContactStoryCard(
-                name: 'Tasio2',
-                avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
-                statusCount: 2,
-              ),
-              const SizedBox(width: 10),
-              _buildContactStoryCard(
-                name: 'Rosa Mom De Kyō',
-                avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',
-                statusCount: 3,
-              ),
-              const SizedBox(width: 10),
-              _buildContactStoryCard(
-                name: 'Sant-kun',
-                avatarUrl: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=150',
-                statusCount: 1,
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
-        // Section: Contactos con estados (Replacing Canales)
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Actualizaciones recientes',
-              style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.bold),
-            ),
-            TextButton(
-              onPressed: () {},
-              child: const Text('Silenciados', style: TextStyle(color: Colors.white54, fontSize: 13)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-
-        // Contact Status Rows with Segmented Instagram-style Ring
-        _buildContactStatusTile(
-          name: 'Cocina Fácil',
-          subtitle: '📷 Esta receta resulta saludable, llen...',
-          time: '20:35',
-          statusCount: 5,
-          avatarUrl: null,
-          initials: 'CF',
-          avatarColor: const Color(0xFFC62828),
-        ),
-        _buildContactStatusTile(
-          name: 'Recetas Freidora de Aire',
-          subtitle: '🔗 Patatas Rellenas de Bacon y C...',
-          time: '15:10',
-          statusCount: 3,
-          avatarUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=150',
-        ),
-        _buildContactStatusTile(
-          name: 'GamsterGaming',
-          subtitle: '🎥 Top 3 banda, vamooos geoware...',
-          time: 'Ayer',
-          statusCount: 2,
-          avatarUrl: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=150',
-        ),
-        _buildContactStatusTile(
-          name: 'STIKERS & MEMES',
-          subtitle: '🎨 Sticker nuevo disponible',
-          time: 'Ayer',
-          statusCount: 1,
-          avatarUrl: null,
-          initials: '🐱',
-          avatarColor: const Color(0xFF37474F),
-        ),
-
-        const SizedBox(height: 20),
-        Center(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.lock_rounded, size: 14, color: Colors.white30),
-              const SizedBox(width: 6),
-              Text(
-                'Tus estados están protegidos con cifrado E2EE',
-                style: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 80),
-      ],
+            );
+          },
+        );
+      },
     );
   }
 
-  Widget _buildAddStatusCard() {
+  Widget _buildMyStatusCard(List<StatusItem> myStatuses) {
+    final hasActiveStatuses = myStatuses.isNotEmpty;
+
     return GestureDetector(
       onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Selecciona una foto o video para compartir en tu estado 🌸'),
-            backgroundColor: Color(0xFF1E1E1E),
-          ),
-        );
+        if (hasActiveStatuses) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => StatusViewScreen(
+                statusGroup: UserStatusGroup(
+                  userId: currentUser?.uid ?? '',
+                  userName: 'Mi estado',
+                  userAvatarUrl: currentUser?.photoURL,
+                  statuses: myStatuses,
+                  lastUpdatedAt: myStatuses.last.createdAt,
+                ),
+              ),
+            ),
+          );
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
+          );
+        }
       },
       child: Container(
         width: 105,
         decoration: BoxDecoration(
           color: const Color(0xFF1E1E1E),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF262626)),
+          border: Border.all(
+            color: hasActiveStatuses ? const Color(0xFFFF1744) : const Color(0xFF262626),
+            width: hasActiveStatuses ? 1.5 : 1.0,
+          ),
         ),
         child: Stack(
           children: [
@@ -792,32 +820,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       CircleAvatar(
                         radius: 28,
                         backgroundColor: const Color(0xFF262626),
-                        child: Text(
-                          currentUser?.displayName?.isNotEmpty == true
-                              ? currentUser!.displayName![0].toUpperCase()
-                              : '🌸',
-                          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                        ),
+                        backgroundImage: (currentUser?.photoURL != null && currentUser!.photoURL!.isNotEmpty)
+                            ? NetworkImage(currentUser!.photoURL!)
+                            : null,
+                        child: (currentUser?.photoURL == null || currentUser!.photoURL!.isEmpty)
+                            ? Text(
+                                currentUser?.displayName?.isNotEmpty == true
+                                    ? currentUser!.displayName![0].toUpperCase()
+                                    : '🌸',
+                                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                              )
+                            : null,
                       ),
                       Positioned(
                         right: 0,
                         bottom: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFFF1744),
-                            shape: BoxShape.circle,
+                        child: GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFF1744),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.add, color: Colors.white, size: 14),
                           ),
-                          child: const Icon(Icons.add, color: Colors.white, size: 14),
                         ),
                       ),
                     ],
                   ),
                   const Spacer(),
-                  const Text(
-                    'Añadir\nestado',
+                  Text(
+                    hasActiveStatuses ? 'Mi estado\n(${myStatuses.length})' : 'Añadir\nestado',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.2),
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.2),
                   ),
                 ],
               ),
@@ -828,80 +869,120 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildContactStoryCard({
-    required String name,
-    required String avatarUrl,
-    required int statusCount,
-  }) {
-    return Container(
-      width: 105,
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF2A2A2A)),
-        image: DecorationImage(
-          image: NetworkImage(avatarUrl),
-          fit: BoxFit.cover,
-          colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.4), BlendMode.darken),
+  Widget _buildContactStoryCard(UserStatusGroup group) {
+    final contactName = _phoneContactNames[group.userId] ?? group.userName;
+    final firstStatus = group.statuses.first;
+
+    ImageProvider? bgImage;
+    if (firstStatus.type == 'image') {
+      try {
+        if (firstStatus.content.startsWith('http')) {
+          bgImage = NetworkImage(firstStatus.content);
+        } else {
+          bgImage = MemoryImage(base64Decode(firstStatus.content));
+        }
+      } catch (_) {}
+    }
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => StatusViewScreen(statusGroup: group)),
+        );
+      },
+      child: Container(
+        width: 105,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF2A2A2A)),
+          image: bgImage != null
+              ? DecorationImage(
+                  image: bgImage,
+                  fit: BoxFit.cover,
+                  colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.4), BlendMode.darken),
+                )
+              : null,
         ),
-      ),
-      child: Stack(
-        children: [
-          // Segmented story ring avatar at top
-          Positioned(
-            top: 10,
-            left: 10,
-            child: CustomPaint(
-              painter: SegmentedStoryRingPainter(
-                count: statusCount,
-                color: const Color(0xFFFF1744),
-                strokeWidth: 2.2,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(4.0),
-                child: CircleAvatar(
-                  radius: 18,
-                  backgroundImage: NetworkImage(avatarUrl),
+        child: Stack(
+          children: [
+            // Segmented story ring avatar at top
+            Positioned(
+              top: 10,
+              left: 10,
+              child: CustomPaint(
+                painter: SegmentedStoryRingPainter(
+                  count: group.statuses.length,
+                  color: const Color(0xFFFF1744),
+                  strokeWidth: 2.2,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(4.0),
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: const Color(0xFF262626),
+                    backgroundImage: (group.userAvatarUrl != null && group.userAvatarUrl!.isNotEmpty)
+                        ? NetworkImage(group.userAvatarUrl!)
+                        : null,
+                    child: (group.userAvatarUrl == null || group.userAvatarUrl!.isEmpty)
+                        ? Text(
+                            contactName.isNotEmpty ? contactName[0].toUpperCase() : '?',
+                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                          )
+                        : null,
+                  ),
                 ),
               ),
             ),
-          ),
-          // Name at bottom
-          Positioned(
-            bottom: 10,
-            left: 8,
-            right: 8,
-            child: Text(
-              name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+            // Contact Name at bottom
+            Positioned(
+              bottom: 10,
+              left: 8,
+              right: 8,
+              child: Text(
+                contactName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildContactStatusTile({
-    required String name,
-    required String subtitle,
-    required String time,
-    required int statusCount,
-    String? avatarUrl,
-    String? initials,
-    Color? avatarColor,
-  }) {
+  Widget _buildContactStatusTile(UserStatusGroup group) {
+    final contactName = _phoneContactNames[group.userId] ?? group.userName;
+    final lastStatus = group.statuses.last;
+    final count = group.statuses.length;
+
+    String subtitle = '📷 Foto';
+    if (lastStatus.type == 'text') {
+      subtitle = lastStatus.content.length > 30 ? '${lastStatus.content.substring(0, 30)}...' : lastStatus.content;
+    } else if (lastStatus.caption != null && lastStatus.caption!.isNotEmpty) {
+      subtitle = lastStatus.caption!;
+    }
+
+    final diff = DateTime.now().difference(lastStatus.createdAt);
+    String timeStr = 'Hace ${diff.inMinutes} min';
+    if (diff.inMinutes >= 60 && diff.inHours < 24) {
+      timeStr = 'Hace ${diff.inHours} h';
+    } else if (diff.inHours >= 24) {
+      timeStr = 'Ayer';
+    }
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(vertical: 4),
       leading: CustomPaint(
         painter: SegmentedStoryRingPainter(
-          count: statusCount,
+          count: count,
           color: const Color(0xFFFF1744),
           strokeWidth: 2.5,
         ),
@@ -909,11 +990,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           padding: const EdgeInsets.all(4.0),
           child: CircleAvatar(
             radius: 24,
-            backgroundColor: avatarColor ?? const Color(0xFF1E1E1E),
-            backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty) ? NetworkImage(avatarUrl) : null,
-            child: (avatarUrl == null || avatarUrl.isEmpty)
+            backgroundColor: const Color(0xFF1E1E1E),
+            backgroundImage: (group.userAvatarUrl != null && group.userAvatarUrl!.isNotEmpty)
+                ? NetworkImage(group.userAvatarUrl!)
+                : null,
+            child: (group.userAvatarUrl == null || group.userAvatarUrl!.isEmpty)
                 ? Text(
-                    initials ?? name[0].toUpperCase(),
+                    contactName.isNotEmpty ? contactName[0].toUpperCase() : '?',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                   )
                 : null,
@@ -921,7 +1004,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       ),
       title: Text(
-        name,
+        contactName,
         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
         overflow: TextOverflow.ellipsis,
       ),
@@ -936,7 +1019,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(
-            time,
+            timeStr,
             style: const TextStyle(color: Color(0xFFFF1744), fontSize: 12, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 4),
@@ -947,18 +1030,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               shape: BoxShape.circle,
             ),
             child: Text(
-              '$statusCount',
+              '$count',
               style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
             ),
           ),
         ],
       ),
       onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Visualizando estado de $name ($statusCount publicaciones) 🌸'),
-            backgroundColor: const Color(0xFF1E1E1E),
-          ),
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => StatusViewScreen(statusGroup: group)),
         );
       },
     );
@@ -1248,11 +1329,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             elevation: 4,
             shape: const CircleBorder(),
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Escribe una actualización de texto 🌸'),
-                  backgroundColor: Color(0xFF1E1E1E),
-                ),
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
               );
             },
             child: const Icon(Icons.edit_rounded, color: Colors.white, size: 20),
@@ -1263,11 +1342,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             elevation: 6,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Abre la cámara para subir un nuevo estado 📸'),
-                  backgroundColor: Color(0xFF1E1E1E),
-                ),
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
               );
             },
             child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 26),
