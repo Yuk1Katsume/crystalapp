@@ -34,7 +34,14 @@ class UpdateService {
       final apkUrl = json['apk_url']?.toString() ?? '';
       final releaseNotes = json['release_notes']?.toString() ?? 'Nueva versión disponible';
 
-      if (latestBuild > currentBuild && apkUrl.isNotEmpty) {
+      bool isNewer = false;
+      if (latestBuild > currentBuild) {
+        isNewer = true;
+      } else if (latestVersion.isNotEmpty && latestVersion != info.version) {
+        isNewer = _isSemverNewer(latestVersion, info.version);
+      }
+
+      if (isNewer && apkUrl.isNotEmpty) {
         return UpdateInfo(
           currentVersion: info.version,
           latestVersion: latestVersion,
@@ -46,6 +53,23 @@ class UpdateService {
       return null;
     } catch (_) {
       return null;
+    }
+  }
+
+  static bool _isSemverNewer(String latest, String current) {
+    try {
+      final lParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      final cParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      final maxLen = lParts.length > cParts.length ? lParts.length : cParts.length;
+      for (int i = 0; i < maxLen; i++) {
+        final l = i < lParts.length ? lParts[i] : 0;
+        final c = i < cParts.length ? cParts[i] : 0;
+        if (l > c) return true;
+        if (l < c) return false;
+      }
+      return false;
+    } catch (_) {
+      return latest != current;
     }
   }
 
