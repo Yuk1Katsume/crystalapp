@@ -3,12 +3,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/message_model.dart';
 import '../services/chat_service.dart';
 import '../services/group_chat_service.dart';
 import '../services/local_database_service.dart';
 import '../services/supabase_config.dart';
 import '../services/block_service.dart';
+import '../services/role_service.dart';
+import '../services/sticker_service.dart';
 import 'search_users_screen.dart';
 import 'image_viewer_screen.dart';
 import 'user_profile_screen.dart';
@@ -1020,11 +1023,119 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
     with SingleTickerProviderStateMixin {
   late TabController _mainTabController;
   int _selectedStickerPackIndex = 0;
+  bool _isSuperAdmin = false;
+  List<StickerPack> _activeStickerPacks = [];
 
   @override
   void initState() {
     super.initState();
     _mainTabController = TabController(length: 3, vsync: this, initialIndex: 0);
+    _activeStickerPacks = [...mockStickerPacks];
+    _initStickersAndRoles();
+  }
+
+  Future<void> _initStickersAndRoles() async {
+    final isAdmin = await RoleService.isSuperAdmin();
+    final customStickers = await StickerService.loadCustomStickers();
+
+    final List<StickerPack> packs = [];
+
+    // Custom stickers pack
+    final customPack = StickerPack(
+      id: 'pack_custom',
+      name: 'Comunidad ✨',
+      trayIconUrl: customStickers.isNotEmpty
+          ? customStickers.first.imageUrl
+          : 'https://api.dicebear.com/7.x/bottts/png?seed=custom_star',
+      stickers: customStickers
+          .map((s) => Sticker(id: s.id, imageUrl: s.imageUrl))
+          .toList(),
+    );
+
+    packs.add(customPack);
+    packs.addAll(mockStickerPacks);
+
+    if (mounted) {
+      setState(() {
+        _isSuperAdmin = isAdmin;
+        _activeStickerPacks = packs;
+      });
+    }
+  }
+
+  Future<void> _createStickerDialog() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    if (picked == null) return;
+
+    final controller = TextEditingController();
+
+    if (!mounted) return;
+    final shouldCreate = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Crear Nuevo Sticker ✨', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(File(picked.path), width: 140, height: 140, fit: BoxFit.contain),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Nombre del sticker (opcional)...',
+                hintStyle: TextStyle(color: Colors.white38),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFF1744))),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Publicar Sticker', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldCreate == true) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF1E1E1E),
+          content: Text('Creando y subiendo sticker... ⏳', style: TextStyle(color: Colors.white)),
+        ),
+      );
+
+      final newSticker = await StickerService.createSticker(
+        imageFile: File(picked.path),
+        name: controller.text.trim().isNotEmpty ? controller.text.trim() : null,
+      );
+
+      if (newSticker != null) {
+        await _initStickersAndRoles();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF1E1E1E),
+              content: Text('¡Sticker creado con éxito y añadido al catálogo! 🎉', style: TextStyle(color: Colors.white)),
+            ),
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -1172,6 +1283,15 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
   }
 
   Widget _buildStickerView() {
+    final packs = _activeStickerPacks.isNotEmpty ? _activeStickerPacks : mockStickerPacks;
+    final safeIndex = _selectedStickerPackIndex < packs.length ? _selectedStickerPackIndex : 0;
+    final currentPack = packs[safeIndex];
+    final isCustomPack = currentPack.id == 'pack_custom';
+
+    final totalItems = (_isSuperAdmin && isCustomPack)
+        ? currentPack.stickers.length + 1
+        : currentPack.stickers.length;
+
     return Column(
       children: [
         Container(
@@ -1179,10 +1299,10 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
           color: const Color(0xFF1E1E1E),
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: mockStickerPacks.length,
+            itemCount: packs.length,
             itemBuilder: (context, index) {
-              final pack = mockStickerPacks[index];
-              final isSelected = index == _selectedStickerPackIndex;
+              final pack = packs[index];
+              final isSelected = index == safeIndex;
               return GestureDetector(
                 onTap: () {
                   setState(() => _selectedStickerPackIndex = index);
@@ -1204,28 +1324,71 @@ class _WhatsAppMediaPickerState extends State<WhatsAppMediaPicker>
           ),
         ),
         Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.all(8),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 4,
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-            ),
-            itemCount: mockStickerPacks[_selectedStickerPackIndex].stickers.length,
-            itemBuilder: (context, index) {
-              final sticker = mockStickerPacks[_selectedStickerPackIndex].stickers[index];
-              return InkWell(
-                onTap: () => widget.onStickerSelected(sticker),
-                child: Image.network(
-                  sticker.imageUrl,
-                  fit: BoxFit.contain,
-                  cacheWidth: 150,
-                  cacheHeight: 150,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white24),
+          child: totalItems == 0
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.sticky_note_2_outlined, size: 48, color: Colors.white24),
+                      const SizedBox(height: 10),
+                      const Text('Aún no hay stickers creados', style: TextStyle(color: Colors.white54)),
+                      if (_isSuperAdmin) ...[
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                          icon: const Icon(Icons.add, color: Colors.white),
+                          label: const Text('Crear Sticker ✨', style: TextStyle(color: Colors.white)),
+                          onPressed: _createStickerDialog,
+                        ),
+                      ],
+                    ],
+                  ),
+                )
+              : GridView.builder(
+                  padding: const EdgeInsets.all(8),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                  ),
+                  itemCount: totalItems,
+                  itemBuilder: (context, index) {
+                    if (_isSuperAdmin && isCustomPack && index == 0) {
+                      return InkWell(
+                        onTap: _createStickerDialog,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF1744).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFFF1744).withOpacity(0.4), width: 1.5),
+                          ),
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add_photo_alternate_rounded, color: Color(0xFFFF1744), size: 28),
+                              SizedBox(height: 4),
+                              Text('Crear ✨', style: TextStyle(color: Color(0xFFFF1744), fontSize: 10, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    final stickerIndex = (_isSuperAdmin && isCustomPack) ? index - 1 : index;
+                    final sticker = currentPack.stickers[stickerIndex];
+
+                    return InkWell(
+                      onTap: () => widget.onStickerSelected(sticker),
+                      child: Image.network(
+                        sticker.imageUrl,
+                        fit: BoxFit.contain,
+                        cacheWidth: 150,
+                        cacheHeight: 150,
+                        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white24),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );

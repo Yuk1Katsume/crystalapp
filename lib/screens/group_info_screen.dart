@@ -241,6 +241,37 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
     }
   }
 
+  void _openAddMembersModal() async {
+    final currentUid = _authService.currentUser?.uid;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => _AddMembersBottomSheet(
+        currentMemberIds: _memberIds,
+        onMembersAdded: (newMemberIds) async {
+          Navigator.pop(ctx);
+          if (newMemberIds.isEmpty) return;
+
+          setState(() => _isLoading = true);
+          await _groupService.addMembersToGroup(widget.groupId, newMemberIds);
+          await _loadGroupDetails();
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: const Color(0xFF1E1E1E),
+                content: Text('${newMemberIds.length} participante(s) añadido(s) con éxito 🎉', style: const TextStyle(color: Colors.white)),
+              ),
+            );
+          }
+        },
+      ),
+    );
+  }
+
   Future<void> _leaveGroup() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -636,6 +667,27 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                                   style: const TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, fontSize: 13),
                                 ),
                               ),
+
+                              // ADD MEMBERS BUTTON
+                              ListTile(
+                                leading: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFFF1744),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white, size: 20),
+                                ),
+                                title: const Text(
+                                  'Añadir participantes',
+                                  style: TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold, fontSize: 15),
+                                ),
+                                onTap: _openAddMembersModal,
+                              ),
+
+                              const Divider(color: Colors.white12, height: 1),
+
                               ..._membersData.map((m) {
                                 final uid = m['id']?.toString() ?? '';
                                 final name = m['resolved_name'] ?? m['display_name'] ?? m['username'] ?? 'Usuario';
@@ -815,6 +867,226 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AddMembersBottomSheet extends StatefulWidget {
+  final List<String> currentMemberIds;
+  final Function(List<String>) onMembersAdded;
+
+  const _AddMembersBottomSheet({
+    required this.currentMemberIds,
+    required this.onMembersAdded,
+  });
+
+  @override
+  State<_AddMembersBottomSheet> createState() => _AddMembersBottomSheetState();
+}
+
+class _AddMembersBottomSheetState extends State<_AddMembersBottomSheet> {
+  final ContactsServiceManager _contactsService = ContactsServiceManager();
+  final AuthService _authService = AuthService();
+  final Set<String> _selectedUids = {};
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  List<Map<String, dynamic>> _availableUsers = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailableUsers();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAvailableUsers() async {
+    final currentUid = _authService.currentUser?.uid;
+    final excludeSet = {...widget.currentMemberIds, if (currentUid != null) currentUid};
+
+    try {
+      // 1. Load phone contacts
+      final contactsRes = await _contactsService.syncContacts();
+      final List<MatchedContact> registeredContacts = contactsRes['registered'] ?? [];
+
+      // 2. Load all Supabase users
+      final List<dynamic> usersRes = await SupabaseConfig.client
+          .from('users')
+          .select('id, username, display_name, phone, avatar_url, is_online');
+
+      final List<Map<String, dynamic>> list = [];
+      for (final u in usersRes) {
+        final uMap = Map<String, dynamic>.from(u as Map);
+        final uid = uMap['id']?.toString() ?? '';
+        if (excludeSet.contains(uid)) continue;
+
+        final phone = uMap['phone']?.toString();
+        final contactName = await _contactsService.getContactNameForUser(uid, phone);
+
+        if (contactName != null && contactName.isNotEmpty) {
+          uMap['resolved_name'] = contactName;
+          uMap['is_in_contacts'] = true;
+        } else {
+          uMap['resolved_name'] = uMap['display_name'] ?? uMap['username'] ?? 'Usuario';
+          uMap['is_in_contacts'] = false;
+        }
+
+        list.add(uMap);
+      }
+
+      _availableUsers = list;
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _searchCtrl.text.toLowerCase().trim();
+    final filtered = _availableUsers.where((u) {
+      final name = (u['resolved_name'] ?? '').toString().toLowerCase();
+      final username = (u['username'] ?? '').toString().toLowerCase();
+      return name.contains(query) || username.contains(query);
+    }).toList();
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Añadir participantes',
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (_selectedUids.isNotEmpty)
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF1744),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                  onPressed: () => widget.onMembersAdded(_selectedUids.toList()),
+                  child: Text(
+                    'Añadir (${_selectedUids.length})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _searchCtrl,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Buscar contacto o usuario...',
+              hintStyle: const TextStyle(color: Colors.white38),
+              prefixIcon: const Icon(Icons.search, color: Colors.white38),
+              filled: true,
+              fillColor: const Color(0xFF1E1E1E),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              contentPadding: const EdgeInsets.symmetric(vertical: 0),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)))
+                : filtered.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No hay contactos disponibles para añadir',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: filtered.length,
+                        itemBuilder: (ctx, i) {
+                          final u = filtered[i];
+                          final uid = u['id']?.toString() ?? '';
+                          final name = u['resolved_name'] ?? 'Usuario';
+                          final username = u['username'] ?? '';
+                          final avatarUrl = u['avatar_url']?.toString();
+                          final isSelected = _selectedUids.contains(uid);
+
+                          return CheckboxListTile(
+                            activeColor: const Color(0xFFFF1744),
+                            checkColor: Colors.white,
+                            value: isSelected,
+                            onChanged: (val) {
+                              setState(() {
+                                if (val == true) {
+                                  _selectedUids.add(uid);
+                                } else {
+                                  _selectedUids.remove(uid);
+                                }
+                              });
+                            },
+                            secondary: CircleAvatar(
+                              radius: 20,
+                              backgroundColor: const Color(0xFF262626),
+                              backgroundImage: (avatarUrl != null && avatarUrl.startsWith('http'))
+                                  ? NetworkImage(avatarUrl)
+                                  : null,
+                              child: (avatarUrl == null || !avatarUrl.startsWith('http'))
+                                  ? Text(
+                                      name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                    )
+                                  : null,
+                            ),
+                            title: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (u['is_in_contacts'] == true) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFF1744).withOpacity(0.18),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text('Agenda 📱', style: TextStyle(color: Color(0xFFFF1744), fontSize: 9, fontWeight: FontWeight.bold)),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            subtitle: Text(
+                              username.isNotEmpty ? '@$username' : '',
+                              style: const TextStyle(color: Colors.white54, fontSize: 12),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
       ),
     );
   }
