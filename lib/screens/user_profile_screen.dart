@@ -252,7 +252,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       margin: const EdgeInsets.only(bottom: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       child: ListTile(
-                        leading: const Icon(Icons.star_rounded, color: Colors.amber, size: 28),
+                        leading: const Icon(Icons.star_rounded, color: Color(0xFFFF1744), size: 28),
                         title: Text(msg.text, style: const TextStyle(color: Colors.white, fontSize: 15)),
                         subtitle: Text(time, style: const TextStyle(color: Colors.white38, fontSize: 11)),
                       ),
@@ -602,7 +602,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     ),
                     child: ListTile(
                       onTap: _openStarredMessagesScreen,
-                      leading: const Icon(Icons.star_rounded, color: Colors.amber, size: 24),
+                      leading: const Icon(Icons.star_rounded, color: Color(0xFFFF1744), size: 24),
                       title: const Text('Mensajes destacados', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,

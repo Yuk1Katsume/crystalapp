@@ -12,6 +12,7 @@ import '../services/block_service.dart';
 import 'search_users_screen.dart';
 import 'image_viewer_screen.dart';
 import 'user_profile_screen.dart';
+import 'group_info_screen.dart';
 import '../widgets/adaptive_image_bubble.dart';
 
 class Sticker {
@@ -373,6 +374,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final isSelectionMode = _selectedMessages.isNotEmpty;
     final singleSelected = _selectedMessages.length == 1 ? _selectedMessages.first : null;
     final isSingleTextMessage = singleSelected != null && singleSelected.type == ChatMessageType.text;
+    final allSelectedAreStarred = _selectedMessages.isNotEmpty && _selectedMessages.every((m) => m.isStarred);
 
     final pickerHeight = _keyboardHeight < 300 ? 320.0 : _keyboardHeight;
 
@@ -408,8 +410,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 ),
                 actions: [
                   IconButton(
-                    icon: const Icon(Icons.star_rounded, color: Colors.amber),
-                    tooltip: 'Destacar',
+                    icon: Icon(
+                      allSelectedAreStarred ? Icons.star_rounded : Icons.star_border_rounded,
+                      color: allSelectedAreStarred ? const Color(0xFFFF1744) : Colors.white,
+                    ),
+                    tooltip: allSelectedAreStarred ? 'Quitar destacado' : 'Destacar',
                     onPressed: _starSelectedMessages,
                   ),
                   if (_selectedMessages.length == 1 && isSingleTextMessage) ...[
@@ -439,7 +444,17 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 titleSpacing: 0,
                 title: InkWell(
                   onTap: () {
-                    if (!isGroup && widget.recipientId != null) {
+                    if (isGroup && widget.groupId != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => GroupInfoScreen(
+                            groupId: widget.groupId!,
+                            groupName: title,
+                          ),
+                        ),
+                      );
+                    } else if (!isGroup && widget.recipientId != null) {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -487,14 +502,20 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                                     margin: const EdgeInsets.only(right: 4),
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: _recipientIsOnline ? Colors.greenAccent : Colors.grey,
+                                      color: isGroup
+                                          ? Colors.deepPurpleAccent
+                                          : (_recipientIsOnline ? Colors.greenAccent : Colors.grey),
                                     ),
                                   ),
                                   Text(
-                                    _recipientIsOnline ? 'Online · Cifrado E2EE' : 'Offline · Cifrado E2EE',
+                                    isGroup
+                                        ? 'Grupo · Cifrado E2EE'
+                                        : (_recipientIsOnline ? 'Online · Cifrado E2EE' : 'Offline · Cifrado E2EE'),
                                     style: TextStyle(
                                       fontSize: 10,
-                                      color: _recipientIsOnline ? Colors.greenAccent : Colors.grey,
+                                      color: isGroup
+                                          ? Colors.white70
+                                          : (_recipientIsOnline ? Colors.greenAccent : Colors.grey),
                                     ),
                                   ),
                                 ],
@@ -830,7 +851,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (msg.isStarred) ...[
-                    const Icon(Icons.star_rounded, size: 12, color: Colors.amber),
+                    const Icon(Icons.star_rounded, size: 12, color: Color(0xFFFF1744)),
                     const SizedBox(width: 3),
                   ],
                   Text(

@@ -106,6 +106,7 @@ class Message {
 class GroupModel {
   final String id;
   final String name;
+  final String? description;
   final String? iconUrl;
   final List<String> memberIds;
   final String adminId;
@@ -114,6 +115,7 @@ class GroupModel {
   GroupModel({
     required this.id,
     required this.name,
+    this.description,
     this.iconUrl,
     required this.memberIds,
     required this.adminId,
@@ -124,6 +126,7 @@ class GroupModel {
     return {
       'id': id,
       'name': name,
+      'description': description,
       'iconUrl': iconUrl,
       'memberIds': memberIds,
       'adminId': adminId,
@@ -135,6 +138,7 @@ class GroupModel {
     return GroupModel(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? 'Group',
+      description: json['description'] as String?,
       iconUrl: json['iconUrl'] as String?,
       memberIds: List<String>.from(json['memberIds'] ?? []),
       adminId: json['adminId'] as String? ?? '',

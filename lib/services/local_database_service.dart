@@ -152,12 +152,12 @@ class LocalDatabaseService {
     return maps.map((item) => _mapToMessage(item)).toList();
   }
 
-  /// Retrieve all media (images, voice, stickers) for a conversation
+  /// Retrieve all media (images, voice, files - excluding stickers) for a conversation
   Future<List<Message>> getMediaMessages(String groupId) async {
     final database = await db;
     final maps = await database.query(
       'local_messages',
-      where: "group_id = ? AND (message_type = 'image' OR message_type = 'audio' OR message_type = 'sticker')",
+      where: "group_id = ? AND ((message_type = 'image' AND text != '🎨 Sticker') OR message_type = 'audio' OR message_type = 'file')",
       whereArgs: [groupId],
       orderBy: 'created_at DESC',
     );
