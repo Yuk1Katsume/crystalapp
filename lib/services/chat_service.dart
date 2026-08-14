@@ -12,6 +12,7 @@ import 'supabase_config.dart';
 
 /// Prefix that signals the encrypted_content field contains an embedded image
 const String _imgPayloadPrefix = 'IMGENC:';
+const String _audioPayloadPrefix = 'AUDENC:';
 /// Max bytes to embed directly in the message payload (~1.5 MB raw → ~2 MB base64)
 const int _maxEmbedBytes = 1500000;
 
@@ -55,6 +56,10 @@ class ChatService {
               // Image is embedded in the payload as encrypted base64
               decryptedText = '📷 Imagen';
               localMediaPath = await _extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
+            } else if (messageType == 'audio' && (encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_URL:'))) {
+              // Voice note is encrypted with E2EE
+              decryptedText = '🎤 Mensaje de voz';
+              localMediaPath = await _extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
             } else if (messageType == 'sticker') {
               decryptedText = '🎨 Sticker';
               localMediaPath = E2EEService.decryptPayload(encryptedContent, chatId);
@@ -113,6 +118,38 @@ class ChatService {
     }
   }
 
+  /// Decodes and saves an embedded encrypted audio payload to local storage
+  Future<String?> _extractAndSaveEmbeddedAudio(
+      String payload, String msgId, String chatId) async {
+    try {
+      Uint8List? encryptedBytes;
+      if (payload.startsWith(_audioPayloadPrefix)) {
+        final base64Data = payload.substring(_audioPayloadPrefix.length);
+        encryptedBytes = Uint8List.fromList(base64Decode(base64Data));
+      } else if (payload.startsWith('AUDENC_URL:')) {
+        final url = payload.substring(11);
+        final res = await HttpClient().getUrl(Uri.parse(url));
+        final response = await res.close();
+        final bytesList = <int>[];
+        await for (var chunk in response) {
+          bytesList.addAll(chunk);
+        }
+        encryptedBytes = Uint8List.fromList(bytesList);
+      }
+
+      if (encryptedBytes != null) {
+        final decryptedBytes = E2EEService.decryptBytes(encryptedBytes, chatId);
+        final dir = await getApplicationDocumentsDirectory();
+        final localFile = File('${dir.path}/vn_received_$msgId.m4a');
+        await localFile.writeAsBytes(decryptedBytes);
+        return localFile.path;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Delete message permanently from local SQLite
   Future<void> deleteMessage(String msgId) async {
     await _localDb.deleteLocalMessage(msgId);
@@ -124,14 +161,23 @@ class ChatService {
     required String text,
     String? mediaUrl,
     bool isSticker = false,
+    ChatMessageType type = ChatMessageType.text,
+    int? audioDurationSeconds,
   }) async {
     final chatId = getChatId(currentUserId, recipientId);
     final msgId = '${currentUserId}_${DateTime.now().millisecondsSinceEpoch}';
     final now = DateTime.now();
 
-    final messageType = isSticker
-        ? 'sticker'
-        : (mediaUrl != null ? 'image' : 'text');
+    String messageType;
+    if (type == ChatMessageType.audio || (mediaUrl != null && (mediaUrl.endsWith('.m4a') || mediaUrl.endsWith('.aac')))) {
+      messageType = 'audio';
+    } else if (isSticker || type == ChatMessageType.sticker) {
+      messageType = 'sticker';
+    } else if (mediaUrl != null || type == ChatMessageType.image) {
+      messageType = 'image';
+    } else {
+      messageType = 'text';
+    }
 
     // 1. Save locally in SQLite as pending / sent
     await _localDb.saveLocalMessage(
@@ -149,7 +195,12 @@ class ChatService {
     // 2. Build encrypted payload for Supabase relay
     String encryptedContent;
 
-    if (isSticker && mediaUrl != null) {
+    if (messageType == 'audio' && mediaUrl != null && File(mediaUrl).existsSync()) {
+      final rawBytes = await File(mediaUrl).readAsBytes();
+      final encryptedBytes = E2EEService.encryptBytes(rawBytes, chatId);
+      final base64Data = base64Encode(encryptedBytes);
+      encryptedContent = '$_audioPayloadPrefix$base64Data';
+    } else if (isSticker && mediaUrl != null) {
       encryptedContent = E2EEService.encryptPayload(mediaUrl, chatId);
     } else if (mediaUrl != null && File(mediaUrl).existsSync()) {
       // Embed encrypted image bytes directly in the payload

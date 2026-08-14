@@ -17,6 +17,8 @@ import 'image_viewer_screen.dart';
 import 'user_profile_screen.dart';
 import 'group_info_screen.dart';
 import '../widgets/adaptive_image_bubble.dart';
+import '../widgets/voice_recording_bar.dart';
+import '../widgets/voice_message_bubble.dart';
 
 class Sticker {
   final String id;
@@ -142,6 +144,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   bool _initialScrollDone = false;
   Message? _replyingToMessage;
   Message? _editingMessage;
+  bool _isRecordingVoice = false;
   
   Future<void> _showStickerOptionsSheet(Message msg) async {
     if (msg.mediaUrl == null) return;
@@ -837,6 +840,41 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildMessageBubble(Message msg, bool isMe, {bool isSelected = false}) {
+    final isVoiceNote = msg.type == ChatMessageType.audio ||
+        (msg.mediaUrl != null && (msg.mediaUrl!.endsWith('.m4a') || msg.mediaUrl!.endsWith('.aac') || msg.text == '🎤 Mensaje de voz'));
+
+    if (isVoiceNote && msg.mediaUrl != null) {
+      final sharedKey = isGroup
+          ? '${widget.groupId!}_group_key'
+          : _chatService.getChatId(currentUser?.uid ?? '', widget.recipientId ?? '');
+
+      return Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: GestureDetector(
+          onLongPress: () => _toggleMessageSelection(msg),
+          onTap: () {
+            if (_selectedMessages.isNotEmpty) {
+              _toggleMessageSelection(msg);
+            }
+          },
+          child: Container(
+            decoration: isSelected
+                ? BoxDecoration(
+                    border: Border.all(color: const Color(0xFFFF1744), width: 2.0),
+                    borderRadius: BorderRadius.circular(20),
+                  )
+                : null,
+            child: VoiceMessageBubble(
+              message: msg,
+              isMe: isMe,
+              sharedKey: sharedKey,
+              senderAvatarUrl: isMe ? currentUser?.photoURL : _recipientAvatarUrl,
+            ),
+          ),
+        ),
+      );
+    }
+
     final isSticker = msg.type == ChatMessageType.sticker || (msg.type == ChatMessageType.image && msg.text == '🎨 Sticker');
 
     if (isSticker && msg.mediaUrl != null) {
@@ -1005,6 +1043,22 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildInputBar() {
+    if (_isRecordingVoice) {
+      return VoiceRecordingBar(
+        onCancel: () {
+          setState(() {
+            _isRecordingVoice = false;
+          });
+        },
+        onSend: (audioPath, durationSeconds) {
+          setState(() {
+            _isRecordingVoice = false;
+          });
+          _sendVoiceNote(audioPath, durationSeconds);
+        },
+      );
+    }
+
     final hasText = _messageController.text.trim().isNotEmpty;
     final isEditing = _editingMessage != null;
 
@@ -1090,16 +1144,16 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 if (hasText || isEditing) {
                   _sendMessage();
                 } else {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        backgroundColor: Color(0xFF1E1E1E),
-                        behavior: SnackBarBehavior.floating,
-                        duration: Duration(seconds: 2),
-                        content: Text('Nota de voz no disponible en esta versión 🎙️', style: TextStyle(color: Colors.white)),
-                      ),
-                    );
-                  }
+                  setState(() {
+                    _isRecordingVoice = true;
+                  });
+                }
+              },
+              onLongPress: () {
+                if (!hasText && !isEditing) {
+                  setState(() {
+                    _isRecordingVoice = true;
+                  });
                 }
               },
               child: Container(
@@ -1114,7 +1168,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     isEditing
                         ? Icons.check_rounded
                         : (hasText ? Icons.send_rounded : Icons.mic_rounded),
-                    color: const Color(0xFF121212),
+                    color: Colors.white,
                     size: isEditing ? 24 : (hasText ? 22 : 24),
                   ),
                 ),
@@ -1124,6 +1178,53 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         ),
       ),
     );
+  }
+
+  void _sendVoiceNote(String audioPath, int durationSeconds) async {
+    if (audioPath.isEmpty) return;
+
+    if (!isGroup && widget.recipientId != null) {
+      final isBlocked = await BlockService().isUserBlocked(widget.recipientId!);
+      if (isBlocked) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF1E1E1E),
+              content: Text('Has bloqueado a este contacto. Desbloquéalo para enviarle mensajes.', style: TextStyle(color: Colors.white)),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    try {
+      if (isGroup) {
+        await _groupService.sendGroupMessage(
+          groupId: widget.groupId!,
+          text: '🎤 Mensaje de voz',
+          type: ChatMessageType.audio,
+          mediaUrl: audioPath,
+          audioDurationSeconds: durationSeconds,
+        );
+      } else if (widget.recipientId != null) {
+        await _chatService.sendDirectMessage(
+          recipientId: widget.recipientId!,
+          text: '🎤 Mensaje de voz',
+          type: ChatMessageType.audio,
+          mediaUrl: audioPath,
+          audioDurationSeconds: durationSeconds,
+        );
+      }
+      _refreshMessages();
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al enviar nota de voz: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
   }
 
   void _showAttachmentMenu() {
