@@ -259,6 +259,17 @@ class LocalDatabaseService {
     );
   }
 
+  /// Get total count of unread incoming messages
+  Future<int> getTotalUnreadCount(String currentUserId) async {
+    final database = await db;
+    final res = await database.rawQuery('''
+      SELECT COUNT(*) as unread_count 
+      FROM local_messages 
+      WHERE is_read = 0 AND sender_id != ?
+    ''', [currentUserId]);
+    return Sqflite.firstIntValue(res) ?? 0;
+  }
+
   /// Get the last message for a conversation (for home screen preview)
   Future<Map<String, dynamic>?> getLastMessage(String groupId) async {
     final database = await db;
