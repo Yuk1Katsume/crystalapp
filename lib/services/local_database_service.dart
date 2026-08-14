@@ -21,7 +21,7 @@ class LocalDatabaseService {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_messages (
@@ -32,6 +32,7 @@ class LocalDatabaseService {
             text TEXT,
             message_type TEXT,
             media_url TEXT,
+            audio_duration INTEGER,
             created_at TEXT,
             is_read INTEGER DEFAULT 1,
             is_starred INTEGER DEFAULT 0,
@@ -55,6 +56,11 @@ class LocalDatabaseService {
             await db.execute('ALTER TABLE local_messages ADD COLUMN is_starred INTEGER DEFAULT 0');
           } catch (_) {}
         }
+        if (oldVersion < 5) {
+          try {
+            await db.execute('ALTER TABLE local_messages ADD COLUMN audio_duration INTEGER');
+          } catch (_) {}
+        }
       },
     );
   }
@@ -68,6 +74,7 @@ class LocalDatabaseService {
     required String text,
     required String messageType,
     String? mediaUrl,
+    int? audioDurationSeconds,
     required DateTime createdAt,
     bool isRead = true,
     bool isStarred = false,
@@ -84,6 +91,7 @@ class LocalDatabaseService {
         'text': text,
         'message_type': messageType,
         'media_url': mediaUrl,
+        'audio_duration': audioDurationSeconds,
         'created_at': createdAt.toIso8601String(),
         'is_read': isRead ? 1 : 0,
         'is_starred': isStarred ? 1 : 0,
@@ -190,6 +198,7 @@ class LocalDatabaseService {
       timestamp: DateTime.parse(item['created_at'] as String),
       type: type,
       mediaUrl: item['media_url'] as String?,
+      audioDurationSeconds: item['audio_duration'] as int?,
       isRead: (item['is_read'] as int? ?? 1) == 1,
       isStarred: (item['is_starred'] as int? ?? 0) == 1,
       status: status,

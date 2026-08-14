@@ -34,6 +34,10 @@ class VoiceNoteService {
   Timer? _timer;
   Timer? _amplitudeTimer;
 
+  // Real amplitude samples captured during the live recording
+  final List<double> _liveRecordedSamples = [];
+  static final Map<String, List<double>> messageWaveforms = {};
+
   final StreamController<int> _durationController = StreamController<int>.broadcast();
   Stream<int> get durationStream => _durationController.stream;
 
@@ -55,6 +59,7 @@ class VoiceNoteService {
 
       final dir = await getTemporaryDirectory();
       _currentRecordingPath = '${dir.path}/vn_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      _liveRecordedSamples.clear();
 
       await _recorder.start(
         const RecordConfig(
@@ -82,12 +87,13 @@ class VoiceNoteService {
         if (_recordingState == RecordingState.recording) {
           try {
             final amp = await _recorder.getAmplitude();
-            // current db is between -60dB and 0dB. Normalize to 0.0 - 1.0
+            // current db is between -60dB and 0dB. Normalize to 0.08 - 1.0
             final db = amp.current;
             double normalized = 0.08;
             if (db > -55.0) {
               normalized = ((db + 55.0) / 55.0).clamp(0.08, 1.0);
             }
+            _liveRecordedSamples.add(normalized);
             _amplitudeController.add(normalized);
           } catch (_) {}
         }
@@ -116,7 +122,87 @@ class VoiceNoteService {
     }
   }
 
-  /// Stop recording and return local audio file path and duration
+  /// Resample raw amplitude stream into a fixed bar count (e.g. 34 bars)
+  List<double> _resampleAmplitudes(List<double> raw, int targetCount) {
+    if (raw.isEmpty) {
+      return List.generate(targetCount, (_) => 0.15);
+    }
+    if (raw.length <= targetCount) {
+      // Interpolate to fill
+      final result = <double>[];
+      for (int i = 0; i < targetCount; i++) {
+        final idx = ((i / targetCount) * raw.length).floor().clamp(0, raw.length - 1);
+        result.add(raw[idx].clamp(0.1, 1.0));
+      }
+      return result;
+    }
+
+    // Average into buckets
+    final result = <double>[];
+    final chunkSize = raw.length / targetCount;
+    for (int i = 0; i < targetCount; i++) {
+      final start = (i * chunkSize).floor();
+      final end = ((i + 1) * chunkSize).ceil().clamp(0, raw.length);
+      double maxVal = 0.1;
+      double sum = 0.0;
+      int count = 0;
+      for (int j = start; j < end; j++) {
+        sum += raw[j];
+        if (raw[j] > maxVal) maxVal = raw[j];
+        count++;
+      }
+      final avg = count > 0 ? (sum / count) : 0.1;
+      // Blend average and peak for punchy speech waveform
+      final val = (avg * 0.4 + maxVal * 0.6).clamp(0.1, 1.0);
+      result.add(val);
+    }
+    return result;
+  }
+
+  /// Extract real waveform samples from an audio file
+  static Future<List<double>> extractWaveformFromAudioFile(String filePath, {int barCount = 34}) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return List.generate(barCount, (_) => 0.15);
+      final bytes = await file.readAsBytes();
+      if (bytes.length < 200) return List.generate(barCount, (_) => 0.15);
+
+      final headerOffset = bytes.length > 512 ? 256 : 0;
+      final audioBytesLength = bytes.length - headerOffset;
+      final chunkSize = (audioBytesLength / barCount).floor();
+      if (chunkSize <= 0) return List.generate(barCount, (_) => 0.15);
+
+      final result = <double>[];
+      for (int i = 0; i < barCount; i++) {
+        final start = headerOffset + (i * chunkSize);
+        final end = (start + chunkSize).clamp(0, bytes.length);
+        double sumDiff = 0.0;
+        int maxVal = 0;
+        for (int j = start; j < end - 1; j += 2) {
+          final diff = (bytes[j] - bytes[j + 1]).abs();
+          sumDiff += diff;
+          if (bytes[j] > maxVal) maxVal = bytes[j];
+        }
+        final avgDiff = (sumDiff / (chunkSize / 2)).clamp(0.0, 255.0);
+        final normalized = (avgDiff / 50.0).clamp(0.12, 1.0);
+        result.add(normalized);
+      }
+
+      // Smooth slightly with neighbors for an organic visual curve
+      final smoothed = <double>[];
+      for (int i = 0; i < result.length; i++) {
+        final prev = i > 0 ? result[i - 1] : result[i];
+        final next = i < result.length - 1 ? result[i + 1] : result[i];
+        final val = (prev * 0.2 + result[i] * 0.6 + next * 0.2).clamp(0.12, 1.0);
+        smoothed.add(val);
+      }
+      return smoothed;
+    } catch (_) {
+      return List.generate(barCount, (_) => 0.15);
+    }
+  }
+
+  /// Stop recording and return local audio file path, duration and real samples
   Future<Map<String, dynamic>?> stopRecording() async {
     _timer?.cancel();
     _amplitudeTimer?.cancel();
@@ -126,18 +212,23 @@ class VoiceNoteService {
     try {
       final path = await _recorder.stop();
       final totalSeconds = _recordingDurationSeconds;
+      final samples = _resampleAmplitudes(_liveRecordedSamples, 34);
+
       _recordingState = RecordingState.idle;
       _recordingDurationSeconds = 0;
+      _liveRecordedSamples.clear();
 
       if (path != null && File(path).existsSync()) {
         return {
           'path': path,
           'duration': totalSeconds > 0 ? totalSeconds : 1,
+          'samples': samples,
         };
       }
     } catch (_) {}
 
     _recordingState = RecordingState.idle;
+    _liveRecordedSamples.clear();
     return null;
   }
 

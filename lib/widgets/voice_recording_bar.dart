@@ -128,6 +128,8 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
     });
   }
 
+  List<double> _previewWaveformSamples = List.generate(32, (_) => 0.15);
+
   void _handlePause() async {
     HapticFeedback.lightImpact();
     await _voiceService.pauseRecording();
@@ -171,6 +173,11 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
       if (res != null) {
         _stoppedAudioPath = res['path'];
         _previewTotalDuration = Duration(seconds: res['duration'] ?? _duration);
+        if (res['samples'] != null) {
+          _previewWaveformSamples = (res['samples'] as List<double>);
+        } else if (_stoppedAudioPath != null) {
+          _previewWaveformSamples = await VoiceNoteService.extractWaveformFromAudioFile(_stoppedAudioPath!, barCount: 32);
+        }
       }
     }
 
@@ -461,9 +468,9 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                           children: [
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: List.generate(32, (i) {
-                                final barHeight = (6 + (i % 6) * 3.2).toDouble();
-                                final isPassed = (i / 32.0) <= progress;
+                              children: List.generate(_previewWaveformSamples.length, (i) {
+                                final barHeight = (5.0 + _previewWaveformSamples[i] * 19.0).clamp(4.0, 24.0);
+                                final isPassed = (i / _previewWaveformSamples.length) <= progress;
                                 return AnimatedContainer(
                                   duration: const Duration(milliseconds: 50),
                                   width: 3,

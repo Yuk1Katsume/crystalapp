@@ -188,6 +188,7 @@ class ChatService {
       text: text,
       messageType: messageType,
       mediaUrl: mediaUrl,
+      audioDurationSeconds: audioDurationSeconds,
       createdAt: now,
       status: 'pending',
     );

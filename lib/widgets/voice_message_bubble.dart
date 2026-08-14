@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import '../models/message_model.dart';
 import '../services/voice_note_service.dart';
@@ -35,11 +37,12 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
   String? _resolvedAvatarUrl;
 
   StreamSubscription? _posSub;
+  StreamSubscription? _durSub;
   StreamSubscription? _playerStateSub;
   StreamSubscription? _playingMsgSub;
   Timer? _smoothProgressTimer;
 
-  late List<double> _barHeights;
+  List<double> _barHeights = List.generate(34, (i) => 6.0 + ((i % 5) * 3.5));
   late AnimationController _waveAnimController;
 
   static const List<double> _speeds = [0.5, 1.0, 1.25, 1.5, 2.0];
@@ -47,11 +50,6 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
   @override
   void initState() {
     super.initState();
-    final seed = widget.message.id.hashCode;
-    _barHeights = List.generate(34, (i) {
-      final val = (((seed + i * 37) % 100) / 100.0);
-      return 6.0 + (val * 18.0);
-    });
 
     if (widget.message.audioDurationSeconds != null && widget.message.audioDurationSeconds! > 0) {
       _totalDuration = Duration(seconds: widget.message.audioDurationSeconds!);
@@ -64,6 +62,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
 
     _resolvedAvatarUrl = widget.senderAvatarUrl;
     _loadSenderAvatar();
+    _loadRealWaveformAndDuration();
 
     _playingMsgSub = _voiceService.playingMessageController.stream.listen((activeId) {
       if (activeId != widget.message.id && _isPlaying && mounted) {
@@ -79,6 +78,14 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
       }
     });
 
+    _durSub = _voiceService.globalChatPlayer.onDurationChanged.listen((dur) {
+      if (_voiceService.currentlyPlayingMessageId == widget.message.id && dur.inMilliseconds > 0 && mounted) {
+        setState(() {
+          _totalDuration = dur;
+        });
+      }
+    });
+
     _playerStateSub = _voiceService.globalChatPlayer.onPlayerComplete.listen((_) {
       if (_voiceService.currentlyPlayingMessageId == widget.message.id && mounted) {
         _stopLocalPlaybackState();
@@ -87,6 +94,60 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
         });
       }
     });
+  }
+
+  void _loadRealWaveformAndDuration() async {
+    // 1. Check in-memory waveform cache
+    if (VoiceNoteService.messageWaveforms.containsKey(widget.message.id)) {
+      final samples = VoiceNoteService.messageWaveforms[widget.message.id]!;
+      if (mounted) {
+        setState(() {
+          _barHeights = samples.map((s) => (5.0 + s * 19.0).clamp(4.0, 24.0)).toList();
+        });
+      }
+      return;
+    }
+
+    // 2. If audio file already exists locally on sender device or cache
+    String? filePath;
+    if (widget.message.mediaUrl != null && File(widget.message.mediaUrl!).existsSync()) {
+      filePath = widget.message.mediaUrl!;
+    } else {
+      filePath = await _voiceService.resolveAndDecryptAudio(
+        rawMediaUrl: widget.message.mediaUrl ?? '',
+        sharedKey: widget.sharedKey,
+        messageId: widget.message.id,
+      );
+    }
+
+    if (filePath != null && File(filePath).existsSync()) {
+      _localDecryptedPath = filePath;
+
+      // Extract real physical waveform from audio file
+      final samples = await VoiceNoteService.extractWaveformFromAudioFile(filePath, barCount: 34);
+      VoiceNoteService.messageWaveforms[widget.message.id] = samples;
+
+      // If duration is missing, extract it with temp player instance
+      if (_totalDuration == Duration.zero) {
+        try {
+          final tempPlayer = AudioPlayer();
+          await tempPlayer.setSource(DeviceFileSource(filePath));
+          final dur = await tempPlayer.getDuration();
+          await tempPlayer.dispose();
+          if (dur != null && dur.inMilliseconds > 0 && mounted) {
+            setState(() {
+              _totalDuration = dur;
+            });
+          }
+        } catch (_) {}
+      }
+
+      if (mounted) {
+        setState(() {
+          _barHeights = samples.map((s) => (5.0 + s * 19.0).clamp(4.0, 24.0)).toList();
+        });
+      }
+    }
   }
 
   void _loadSenderAvatar() async {
@@ -123,7 +184,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
     _isPlaying = true;
     _waveAnimController.repeat(reverse: true);
     _smoothProgressTimer?.cancel();
-    _smoothProgressTimer = Timer.periodic(const Duration(milliseconds: 40), (timer) async {
+    _smoothProgressTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) async {
       if (!_isPlaying || _voiceService.currentlyPlayingMessageId != widget.message.id) {
         timer.cancel();
         return;
@@ -132,6 +193,12 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
         final pos = await _voiceService.globalChatPlayer.getCurrentPosition();
         if (pos != null && mounted) {
           setState(() => _currentPosition = pos);
+        }
+        if (_totalDuration == Duration.zero) {
+          final dur = await _voiceService.globalChatPlayer.getDuration();
+          if (dur != null && dur.inMilliseconds > 0 && mounted) {
+            setState(() => _totalDuration = dur);
+          }
         }
       } catch (_) {}
     });
@@ -150,6 +217,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
   void dispose() {
     _smoothProgressTimer?.cancel();
     _posSub?.cancel();
+    _durSub?.cancel();
     _playerStateSub?.cancel();
     _playingMsgSub?.cancel();
     _waveAnimController.dispose();
@@ -216,6 +284,10 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
         audioPath: _localDecryptedPath!,
       );
       await _voiceService.setPlaybackRate(_playbackSpeed);
+      final dur = await _voiceService.globalChatPlayer.getDuration();
+      if (dur != null && dur.inMilliseconds > 0 && mounted) {
+        setState(() => _totalDuration = dur);
+      }
     }
   }
 
@@ -236,19 +308,25 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
     final timeStr = '${widget.message.timestamp.hour.toString().padLeft(2, '0')}:${widget.message.timestamp.minute.toString().padLeft(2, '0')}';
     final isMe = widget.isMe;
 
-    final progress = _totalDuration.inMilliseconds > 0
-        ? (_currentPosition.inMilliseconds / _totalDuration.inMilliseconds).clamp(0.0, 1.0)
+    final effectiveTotalMs = _totalDuration.inMilliseconds > 0
+        ? _totalDuration.inMilliseconds
+        : (widget.message.audioDurationSeconds != null && widget.message.audioDurationSeconds! > 0
+            ? widget.message.audioDurationSeconds! * 1000
+            : 1000);
+
+    final progress = (effectiveTotalMs > 0)
+        ? (_currentPosition.inMilliseconds / effectiveTotalMs).clamp(0.0, 1.0)
         : 0.0;
 
     final bubbleBg = isMe
-        ? const Color(0xFFB52355) // Pink magenta matching reference image 1
+        ? const Color(0xFFB52355) // Pink magenta matching WhatsApp capsule
         : const Color(0xFF1E2428); // Dark bubble for incoming
 
     return AnimatedBuilder(
       animation: _waveAnimController,
       builder: (context, child) {
         return Container(
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.84),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
           margin: const EdgeInsets.symmetric(vertical: 3),
           padding: const EdgeInsets.fromLTRB(10, 8, 12, 6),
           decoration: BoxDecoration(
@@ -267,7 +345,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Avatar with overlapping Microphone Badge
+                  // Sender Profile Avatar with overlapping Microphone Badge
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -335,7 +413,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
 
                   const SizedBox(width: 4),
 
-                  // Waveform Track with Scrubber
+                  // Waveform Track with Scrubber Dot
                   Expanded(
                     child: LayoutBuilder(
                       builder: (context, constraints) {
@@ -354,24 +432,17 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
                             child: Stack(
                               alignment: Alignment.centerLeft,
                               children: [
-                                // Waveform Bars with dynamic pulse when playing
+                                // Real Waveform Bars
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: List.generate(_barHeights.length, (i) {
                                     final barProg = i / (_barHeights.length - 1);
                                     final isPassed = barProg <= progress;
 
-                                    // Dynamic wave effect when active
-                                    double barHeight = _barHeights[i];
-                                    if (_isPlaying && isPassed) {
-                                      final waveOffset = ((_waveAnimController.value * 3.1415) + (i * 0.4)) % 3.1415;
-                                      barHeight = (barHeight + (waveOffset * 3.0)).clamp(4.0, 24.0);
-                                    }
-
                                     return AnimatedContainer(
                                       duration: const Duration(milliseconds: 60),
                                       width: 2.8,
-                                      height: barHeight,
+                                      height: _barHeights[i],
                                       decoration: BoxDecoration(
                                         color: isPassed ? Colors.white : Colors.white38,
                                         borderRadius: BorderRadius.circular(1.5),
@@ -380,7 +451,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
                                   }),
                                 ),
 
-                                // White / Pink Scrubber Dot thumb
+                                // White / Pink Scrubber Dot thumb that glides in real-time
                                 Positioned(
                                   left: ((constraints.maxWidth - 12) * progress).clamp(0.0, constraints.maxWidth - 12),
                                   child: Container(
@@ -391,7 +462,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
                                       shape: BoxShape.circle,
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.black.withOpacity(0.3),
+                                          color: Colors.black.withOpacity(0.35),
                                           blurRadius: 4,
                                           offset: const Offset(0, 1),
                                         ),
@@ -441,7 +512,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      _formatDuration(_isPlaying ? _currentPosition : _totalDuration),
+                      _formatDuration(_isPlaying ? _currentPosition : (_totalDuration.inMilliseconds > 0 ? _totalDuration : Duration(seconds: widget.message.audioDurationSeconds ?? 0))),
                       style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
                     ),
                     Row(
