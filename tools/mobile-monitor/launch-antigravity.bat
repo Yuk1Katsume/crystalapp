@@ -1,0 +1,3 @@
+@echo off
+echo Starting Antigravity IDE with Remote Debugging on port 9000...
+start "" antigravity --remote-debugging-port=9000

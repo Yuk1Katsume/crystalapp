@@ -1,0 +1,19 @@
+{
+  "name": "ag-mobile-monitor",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Mobile web interface for monitoring Antigravity chat via visual snapshots",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "launch:antigravity": "antigravity --remote-debugging-port=9000",
+    "start:all": "start antigravity --remote-debugging-port=9000 && node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

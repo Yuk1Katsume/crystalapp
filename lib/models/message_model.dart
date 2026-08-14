@@ -1,0 +1,142 @@
+// Message model for real-time chat with E2EE, Group, Image & Voice support
+
+enum ChatMessageType {
+  text,
+  image,
+  sticker,
+  audio,
+  system,
+}
+
+enum MessageStatus {
+  pending,   // Clock icon (waiting/no internet)
+  sent,      // 1 grey tick
+  delivered, // 2 grey ticks
+  read,      // 2 neon pink ticks (#FF1744 / Colors.pinkAccent)
+}
+
+class Message {
+  final String id;
+  final String text;
+  final DateTime timestamp;
+  final String senderId;
+  final String? senderName;
+  final String? recipientId;
+  final String? groupId;
+  final bool isEncrypted;
+  final ChatMessageType type;
+  final String? mediaUrl;
+  final int? audioDurationSeconds;
+  final bool isRead;
+  final MessageStatus status;
+
+  Message({
+    required this.id,
+    required this.text,
+    required this.timestamp,
+    required this.senderId,
+    this.senderName,
+    this.recipientId,
+    this.groupId,
+    this.isEncrypted = true,
+    this.type = ChatMessageType.text,
+    this.mediaUrl,
+    this.audioDurationSeconds,
+    this.isRead = false,
+    this.status = MessageStatus.sent,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'text': text,
+      'timestamp': timestamp.toIso8601String(),
+      'senderId': senderId,
+      'senderName': senderName,
+      'recipientId': recipientId,
+      'groupId': groupId,
+      'isEncrypted': isEncrypted,
+      'type': type.name,
+      'mediaUrl': mediaUrl,
+      'audioDurationSeconds': audioDurationSeconds,
+      'isRead': isRead,
+      'status': status.name,
+    };
+  }
+
+  factory Message.fromJson(Map<String, dynamic> json) {
+    return Message(
+      id: json['id'] as String? ?? '',
+      text: json['text'] as String? ?? '',
+      timestamp: json['timestamp'] != null
+          ? DateTime.tryParse(json['timestamp'].toString()) ?? DateTime.now()
+          : DateTime.now(),
+      senderId: json['senderId'] as String? ?? '',
+      senderName: json['senderName'] as String?,
+      recipientId: json['recipientId'] as String?,
+      groupId: json['groupId'] as String?,
+      isEncrypted: json['isEncrypted'] as bool? ?? true,
+      type: ChatMessageType.values.firstWhere(
+        (e) => e.name == json['type'],
+        orElse: () => ChatMessageType.text,
+      ),
+      mediaUrl: json['mediaUrl'] as String?,
+      audioDurationSeconds: json['audioDurationSeconds'] as int?,
+      isRead: json['isRead'] as bool? ?? false,
+      status: MessageStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+        orElse: () => MessageStatus.sent,
+      ),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Message && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
+
+class GroupModel {
+  final String id;
+  final String name;
+  final String? iconUrl;
+  final List<String> memberIds;
+  final String adminId;
+  final DateTime createdAt;
+
+  GroupModel({
+    required this.id,
+    required this.name,
+    this.iconUrl,
+    required this.memberIds,
+    required this.adminId,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'iconUrl': iconUrl,
+      'memberIds': memberIds,
+      'adminId': adminId,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory GroupModel.fromJson(Map<String, dynamic> json) {
+    return GroupModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'Group',
+      iconUrl: json['iconUrl'] as String?,
+      memberIds: List<String>.from(json['memberIds'] ?? []),
+      adminId: json['adminId'] as String? ?? '',
+      createdAt: json['createdAt'] != null
+          ? DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now()
+          : DateTime.now(),
+    );
+  }
+}

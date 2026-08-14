@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Antigravity Mobile Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            border: "hsl(var(--border, 240 3.7% 15.9%))",
+            background: "hsl(var(--background, 240 10% 3.9%))",
+            foreground: "hsl(var(--foreground, 0 0% 98%))",
+            primary: {
+              DEFAULT: "hsl(var(--primary, 0 0% 98%))",
+              foreground: "hsl(var(--primary-foreground, 240 5.9% 10%))",
+            },
+            secondary: {
+              DEFAULT: "hsl(var(--secondary, 240 3.7% 15.9%))",
+              foreground: "hsl(var(--secondary-foreground, 0 0% 98%))",
+            },
+            muted: {
+              DEFAULT: "hsl(var(--muted, 240 3.7% 15.9%))",
+              foreground: "hsl(var(--muted-foreground, 240 5% 64.9%))",
+            },
+            accent: {
+              DEFAULT: "hsl(var(--accent, 240 3.7% 15.9%))",
+              foreground: "hsl(var(--accent-foreground, 0 0% 98%))",
+            },
+            card: {
+              DEFAULT: "hsl(var(--card, 240 10% 3.9%))",
+              foreground: "hsl(var(--card-foreground, 0 0% 98%))",
+            },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --background: 0 0% 6%;
+      --foreground: 0 0% 98%;
+      --card: 0 0% 10%;
+      --card-foreground: 0 0% 98%;
+      --primary: 0 0% 98%;
+      --primary-foreground: 0 0% 9%;
+      --secondary: 0 0% 14%;
+      --secondary-foreground: 0 0% 98%;
+      --muted: 0 0% 14%;
+      --muted-foreground: 0 0% 65%;
+      --accent: 0 0% 14%;
+      --accent-foreground: 0 0% 98%;
+      --border: 0 0% 18%;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d0d0d !important;
+      color: #f5f5f7 !important;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      margin: 0 !important;
+    }
+
+    .headers-container {
+      background: #161616 !important;
+      border-bottom: 1px solid #262626 !important;
+      position: relative;
+      z-index: 100;
+      display: flex;
+      overflow-x: auto;
+      white-space: nowrap;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .cascade-tab {
+      padding: 10px 16px;
+      cursor: pointer;
+      border-right: 1px solid #262626;
+      opacity: 0.7;
+      transition: all 0.2s;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cascade-tab.active {
+      opacity: 1;
+      background: #222222;
+      border-bottom: 2px solid #3b82f6;
+    }
+
+    .cascade-tab .status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #666;
+    }
+
+    .cascade-tab.active-window .status {
+      background: #4ade80;
+    }
+
+    .chat-container {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      background: #0d0d0d;
+    }
+
+    .chat-content {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 12px;
+    }
+
+    #conversation, .antigravity-agent-side-panel {
+      display: flex !important;
+      flex-direction: column !important;
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      width: 100% !important;
+      background: transparent !important;
+      color: #f5f5f7 !important;
+      overflow-y: visible !important;
+      max-height: none !important;
+    }
+
+    #conversation > div, #conversation [aria-label="Message history"], #conversation [style*="container-type"] {
+      height: auto !important;
+      min-height: 100% !important;
+      overflow: visible !important;
+      max-height: none !important;
+    }
+
+    /* Markdown prose colors */
+    .prose {
+      color: #e5e7eb !important;
+    }
+    .prose pre {
+      background: #181818 !important;
+      border: 1px solid #2a2a2a !important;
+      border-radius: 8px;
+      padding: 10px;
+      overflow-x: auto;
+    }
+    .prose code {
+      background: #222 !important;
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: #93c5fd !important;
+    }
+
+    .input-section {
+      background: #161616 !important;
+      padding: 10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+      border-top: 1px solid #262626 !important;
+      position: relative;
+      z-index: 1000;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    textarea {
+      flex: 1;
+      background: #0d0d0d;
+      border: 1px solid #333;
+      color: #f5f5f7;
+      padding: 10px 12px;
+      border-radius: 8px;
+      resize: none;
+      height: 44px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: #3b82f6;
+    }
+
+    button#sendBtn {
+      padding: 0 18px;
+      height: 44px;
+      background: #3b82f6;
+      border: none;
+      color: white;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button#sendBtn:hover {
+      background: #2563eb;
+    }
+
+    .loading {
+      text-align: center;
+      color: #888;
+      margin-top: 60px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="headers-container" id="tabsContainer">
+    <div class="cascade-tab">Connecting...</div>
+  </div>
+
+  <div class="chat-container" id="chatContainer">
+    <div class="chat-content" id="chatContent">
+      <div class="loading">Cargando chat de Antigravity...</div>
+    </div>
+  </div>
+
+  <div class="input-section">
+    <textarea id="messageInput" placeholder="Escribe un mensaje para Antigravity..."></textarea>
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <script>
+    const tabsContainer = document.getElementById('tabsContainer');
+    const chatContent = document.getElementById('chatContent');
+    const chatContainer = document.getElementById('chatContainer');
+
+    let cascades = [];
+    let currentCascadeId = null;
+    let ws = null;
+    let pollTimer = null;
+    let lastRenderedHtml = '';
+    let isFirstLoad = true;
+
+    async function fetchCascades() {
+      try {
+        const res = await fetch('/cascades');
+        if (res.ok) {
+          cascades = await res.json();
+          renderTabs();
+          if (!currentCascadeId && cascades.length > 0) {
+            selectCascade(cascades[0].id);
+          }
+        }
+      } catch (e) {}
+    }
+
+    function connectWS() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${location.host}`);
+
+      ws.onopen = () => {
+        fetchCascades();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'cascade_list') {
+            cascades = data.cascades;
+            renderTabs();
+            if (!currentCascadeId && cascades.length > 0) {
+              selectCascade(cascades[0].id);
+            }
+          }
+          if (data.type === 'snapshot_update') {
+            if (data.cascadeId === currentCascadeId) {
+              updateContentOnly(currentCascadeId);
+            }
+          }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 2000);
+      };
+    }
+
+    function renderTabs() {
+      if (cascades.length === 0) {
+        tabsContainer.innerHTML = '<div class="cascade-tab">Buscando chat de Antigravity...</div>';
+        return;
+      }
+      tabsContainer.innerHTML = cascades.map(c => `
+        <div class="cascade-tab ${c.id === currentCascadeId ? 'active' : ''} ${c.active ? 'active-window' : ''}" 
+             onclick="selectCascade('${c.id}')">
+            <div class="status"></div>
+            ${c.title || 'Antigravity Chat'}
+        </div>
+      `).join('');
+    }
+
+    function selectCascade(id) {
+      if (currentCascadeId !== id) {
+        lastRenderedHtml = '';
+        isFirstLoad = true;
+      }
+      currentCascadeId = id;
+      renderTabs();
+      updateContentOnly(id);
+
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        if (currentCascadeId) updateContentOnly(currentCascadeId);
+      }, 1500);
+    }
+
+    async function updateContentOnly(id) {
+      try {
+        const res = await fetch(`/snapshot/${id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || !data.html) return;
+
+        // If the HTML is identical, don't touch innerHTML to prevent resetting scroll position!
+        if (data.html === lastRenderedHtml) {
+          return;
+        }
+
+        const prevScrollTop = chatContent.scrollTop;
+        const wasNearBottom = (chatContent.scrollHeight - chatContent.scrollTop - chatContent.clientHeight) < 120;
+
+        chatContent.innerHTML = data.html;
+        lastRenderedHtml = data.html;
+
+        // Auto-scroll to bottom on first load or if user was already at bottom
+        if (isFirstLoad || wasNearBottom) {
+          chatContent.scrollTop = chatContent.scrollHeight;
+          isFirstLoad = false;
+        } else {
+          // Preserve user scroll position if they scrolled up to read earlier messages
+          chatContent.scrollTop = prevScrollTop;
+        }
+      } catch (e) {}
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+      if (!text || !currentCascadeId) return;
+
+      input.value = '';
+
+      try {
+        await fetch(`/send/${currentCascadeId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        setTimeout(() => updateContentOnly(currentCascadeId), 300);
+      } catch (e) {
+        input.value = text;
+        alert("Error enviando mensaje: " + e.message);
+      }
+    }
+
+    document.getElementById('sendBtn').onclick = sendMessage;
+
+    document.getElementById('messageInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    fetchCascades();
+    connectWS();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,70 @@
+name: crystalapp
+description: "CrystalApp - WhatsApp-like chat app with Firebase"
+publish_to: 'none'
+
+version: 1.2.0+10003
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # Core
+  cupertino_icons: ^1.0.8
+  google_fonts: ^8.1.0
+
+  # Firebase
+  firebase_core: ^3.10.0
+  firebase_auth: ^5.4.0
+  cloud_firestore: ^5.6.0
+  firebase_messaging: ^15.2.0
+
+  # Supabase
+  supabase_flutter: ^2.8.3
+
+
+  # Encryption
+  crypto: ^3.0.3
+
+  # Real-time
+  flutter_riverpod: ^2.4.9
+
+  # Media & Audio
+  image_picker: ^1.1.2
+
+  # Utilities
+  shared_preferences: ^2.2.2
+  uuid: ^4.3.3
+  http: ^1.1.0
+  permission_handler: ^11.3.1
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  path_provider: ^2.1.2
+  package_info_plus: ^8.0.0
+  open_file: ^3.3.2
+
+dependency_overrides:
+  path_provider_foundation: 2.4.0
+
+  # State Management
+  provider: ^6.1.1
+
+  # QR Code
+  qr_flutter: ^4.1.0
+
+  # Network
+  dio: ^5.4.0
+
+  # Media & Audio
+  image_picker: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
