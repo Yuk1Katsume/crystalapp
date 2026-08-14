@@ -78,17 +78,15 @@ class VoiceNoteService {
       });
 
       _amplitudeTimer?.cancel();
-      _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 100), (t) async {
+      _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 50), (t) async {
         if (_recordingState == RecordingState.recording) {
           try {
             final amp = await _recorder.getAmplitude();
             // current db is between -60dB and 0dB. Normalize to 0.0 - 1.0
             final db = amp.current;
-            double normalized = 0.0;
-            if (db > -60.0) {
-              normalized = ((db + 60.0) / 60.0).clamp(0.05, 1.0);
-            } else {
-              normalized = 0.05;
+            double normalized = 0.08;
+            if (db > -55.0) {
+              normalized = ((db + 55.0) / 55.0).clamp(0.08, 1.0);
             }
             _amplitudeController.add(normalized);
           } catch (_) {}
@@ -283,6 +281,15 @@ class VoiceNoteService {
   /// Pause current chat voice note
   Future<void> pauseMessageAudio() async {
     await globalChatPlayer.pause();
+  }
+
+  double _chatPlaybackRate = 1.0;
+  double get chatPlaybackRate => _chatPlaybackRate;
+
+  /// Set chat playback speed (0.5x, 1.0x, 1.25x, 1.5x, 2.0x)
+  Future<void> setPlaybackRate(double rate) async {
+    _chatPlaybackRate = rate;
+    await globalChatPlayer.setPlaybackRate(rate);
   }
 
   /// Stop current chat voice note

@@ -339,13 +339,15 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
               const SizedBox(width: 14),
               Expanded(
                 child: SizedBox(
-                  height: 26,
+                  height: 28,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: _liveAmplitudes.map((amp) {
-                      return Container(
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 60),
+                        curve: Curves.easeOutCubic,
                         width: 3.2,
-                        height: (26 * amp).clamp(4.0, 26.0),
+                        height: (28 * amp).clamp(4.0, 28.0),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFF2E74),
                           borderRadius: BorderRadius.circular(2),
@@ -415,9 +417,11 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
 
   // --- STATE 3: PAUSED RECORDING PREVIEW ---
   Widget _buildPausedPreviewView() {
-    final currentPosSec = _previewPosition.inSeconds;
-    final totalSec = _duration > 0 ? _duration : 1;
-    final progress = (currentPosSec / totalSec).clamp(0.0, 1.0);
+    final totalMs = _previewTotalDuration.inMilliseconds > 0
+        ? _previewTotalDuration.inMilliseconds
+        : (_duration > 0 ? _duration * 1000 : 1000);
+    final currentMs = _previewPosition.inMilliseconds;
+    final progress = (currentMs / totalMs).clamp(0.0, 1.0);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -441,33 +445,46 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
                 onPressed: _togglePreviewPlay,
               ),
               Expanded(
-                child: SizedBox(
-                  height: 22,
-                  child: Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: List.generate(30, (i) {
-                          final barHeight = (6 + (i % 5) * 3.5).toDouble();
-                          final isPassed = (i / 30.0) <= progress;
-                          return Container(
-                            width: 3,
-                            height: barHeight,
-                            decoration: BoxDecoration(
-                              color: isPassed ? const Color(0xFFFF2E74) : Colors.white24,
-                              borderRadius: BorderRadius.circular(1.5),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (details) {
+                        final rel = (details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0);
+                        final targetMs = (rel * totalMs).round();
+                        _voiceService.previewPlayer.seek(Duration(milliseconds: targetMs));
+                      },
+                      child: SizedBox(
+                        height: 24,
+                        child: Stack(
+                          alignment: Alignment.centerLeft,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: List.generate(32, (i) {
+                                final barHeight = (6 + (i % 6) * 3.2).toDouble();
+                                final isPassed = (i / 32.0) <= progress;
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 50),
+                                  width: 3,
+                                  height: barHeight,
+                                  decoration: BoxDecoration(
+                                    color: isPassed ? const Color(0xFFFF2E74) : Colors.white24,
+                                    borderRadius: BorderRadius.circular(1.5),
+                                  ),
+                                );
+                              }),
                             ),
-                          );
-                        }),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 10),
               Text(
-                _formatDuration(_isPreviewPlaying ? currentPosSec : _duration),
+                _formatDuration(_isPreviewPlaying ? _previewPosition.inSeconds : _duration),
                 style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
               ),
             ],

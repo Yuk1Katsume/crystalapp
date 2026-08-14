@@ -875,7 +875,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
               message: msg,
               isMe: isMe,
               sharedKey: sharedKey,
-              senderAvatarUrl: isMe ? currentUser?.photoURL : _recipientAvatarUrl,
+              senderAvatarUrl: isMe ? currentUser?.photoURL : (isGroup ? null : _recipientAvatarUrl),
             ),
           ),
         ),
