@@ -142,6 +142,17 @@ class LocalDatabaseService {
     );
   }
 
+  /// Mark a single message as read
+  Future<void> markSingleMessageAsRead(String messageId) async {
+    final database = await db;
+    await database.update(
+      'local_messages',
+      {'is_read': 1, 'status': 'read'},
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
   /// Retrieve local chat history for a conversation
   Future<List<Message>> getLocalMessages(String groupId) async {
     final database = await db;

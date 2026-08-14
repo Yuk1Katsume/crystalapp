@@ -834,15 +834,18 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildStatusIcon(Message msg) {
+    if (msg.isRead || msg.status == MessageStatus.read) {
+      return const Icon(Icons.done_all_rounded, size: 15, color: Color(0xFFFF1744)); // Neon pink (#FF1744)
+    }
     switch (msg.status) {
       case MessageStatus.pending:
-        return const Icon(Icons.access_time, size: 13, color: Colors.white60);
+        return const Icon(Icons.access_time_rounded, size: 13, color: Colors.white60);
       case MessageStatus.sent:
-        return const Icon(Icons.done, size: 14, color: Colors.white60);
+        return const Icon(Icons.done_rounded, size: 14, color: Colors.white60);
       case MessageStatus.delivered:
-        return const Icon(Icons.done_all, size: 14, color: Colors.white70);
+        return const Icon(Icons.done_all_rounded, size: 14, color: Colors.white70);
       case MessageStatus.read:
-        return const Icon(Icons.done_all, size: 14, color: Color(0xFFFF1744)); // Neon pink (#FF1744)
+        return const Icon(Icons.done_all_rounded, size: 15, color: Color(0xFFFF1744)); // Neon pink (#FF1744)
     }
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/message_model.dart';
 import '../services/voice_note_service.dart';
 import '../services/supabase_config.dart';
+import '../services/local_database_service.dart';
 
 class VoiceMessageBubble extends StatefulWidget {
   final Message message;
@@ -30,6 +31,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
 
   bool _isPlaying = false;
   bool _isLoading = false;
+  bool _hasBeenPlayed = false;
   String? _localDecryptedPath;
   Duration _currentPosition = Duration.zero;
   Duration _totalDuration = Duration.zero;
@@ -210,6 +212,10 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
 
   void _startLocalPlaybackState() {
     _isPlaying = true;
+    _hasBeenPlayed = true;
+    if (!widget.isMe) {
+      LocalDatabaseService().markSingleMessageAsRead(widget.message.id);
+    }
     _waveAnimController.repeat(reverse: true);
     _smoothProgressTimer?.cancel();
     _smoothProgressTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) async {
@@ -331,10 +337,50 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
     }
   }
 
+  Widget _buildStatusIcon(Message msg) {
+    if (msg.isRead || msg.status == MessageStatus.read) {
+      return const Icon(
+        Icons.done_all_rounded,
+        size: 15,
+        color: Color(0xFFFF1744), // Neon pink
+      );
+    }
+    switch (msg.status) {
+      case MessageStatus.pending:
+        return const Icon(
+          Icons.access_time_rounded,
+          size: 13,
+          color: Colors.white60,
+        );
+      case MessageStatus.sent:
+        return const Icon(
+          Icons.done_rounded,
+          size: 14,
+          color: Colors.white60,
+        );
+      case MessageStatus.delivered:
+        return const Icon(
+          Icons.done_all_rounded,
+          size: 14,
+          color: Colors.white70,
+        );
+      case MessageStatus.read:
+        return const Icon(
+          Icons.done_all_rounded,
+          size: 15,
+          color: Color(0xFFFF1744), // Neon pink
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final timeStr = '${widget.message.timestamp.hour.toString().padLeft(2, '0')}:${widget.message.timestamp.minute.toString().padLeft(2, '0')}';
     final isMe = widget.isMe;
+
+    final bool isAudioPlayed = isMe
+        ? (widget.message.isRead || widget.message.status == MessageStatus.read)
+        : (_isPlaying || _hasBeenPlayed || widget.message.isRead || widget.message.status == MessageStatus.read);
 
     final effectiveTotalMs = _totalDuration.inMilliseconds > 0
         ? _totalDuration.inMilliseconds
@@ -393,18 +439,25 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
                             : null,
                       ),
                       Positioned(
-                        right: -2,
-                        bottom: -2,
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF121212),
+                        right: -3,
+                        bottom: -3,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          padding: const EdgeInsets.all(3.5),
+                          decoration: BoxDecoration(
+                            color: isAudioPlayed
+                                ? const Color(0xFFFF8DA1) // Rosa claro
+                                : const Color(0xFF121212), // Negro
                             shape: BoxShape.circle,
+                            border: Border.all(
+                              color: bubbleBg,
+                              width: 1.5,
+                            ),
                           ),
                           child: const Icon(
                             Icons.mic_rounded,
                             color: Colors.white,
-                            size: 13,
+                            size: 14.5,
                           ),
                         ),
                       ),
@@ -552,11 +605,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
                         ),
                         if (isMe) ...[
                           const SizedBox(width: 4),
-                          const Icon(
-                            Icons.done_all_rounded,
-                            size: 15,
-                            color: Color(0xFF00E5FF), // Cyan double checkmarks
-                          ),
+                          _buildStatusIcon(widget.message),
                         ],
                       ],
                     ),
