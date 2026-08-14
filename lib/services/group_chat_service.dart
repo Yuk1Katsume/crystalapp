@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../models/message_model.dart';
 import 'e2ee_service.dart';
 import 'supabase_config.dart';
+import 'voice_note_service.dart';
 
 class GroupChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -236,6 +237,7 @@ class GroupChatService {
     ChatMessageType type = ChatMessageType.text,
     String? mediaUrl,
     int? audioDurationSeconds,
+    List<double>? waveformSamples,
   }) async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -249,6 +251,19 @@ class GroupChatService {
         .collection('messages')
         .doc();
 
+    List<double>? samples = waveformSamples;
+    if (samples == null && mediaUrl != null && VoiceNoteService.messageWaveforms.containsKey(mediaUrl)) {
+      samples = VoiceNoteService.messageWaveforms[mediaUrl];
+    }
+    final waveformStr = samples?.map((s) => s.toStringAsFixed(2)).join(',');
+
+    if (samples != null) {
+      VoiceNoteService.cacheWaveform(docRef.id, samples);
+      if (mediaUrl != null) {
+        VoiceNoteService.cacheWaveform(mediaUrl, samples);
+      }
+    }
+
     final message = Message(
       id: docRef.id,
       text: encryptedText,
@@ -260,6 +275,7 @@ class GroupChatService {
       type: type,
       mediaUrl: mediaUrl,
       audioDurationSeconds: audioDurationSeconds,
+      audioWaveform: waveformStr,
     );
 
     try {

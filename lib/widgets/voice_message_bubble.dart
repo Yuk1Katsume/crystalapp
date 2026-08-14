@@ -97,7 +97,22 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
   }
 
   void _loadRealWaveformAndDuration() async {
-    // 1. Check in-memory waveform cache
+    // 1. Check if message model already has real recorded waveformList
+    if (widget.message.waveformList != null && widget.message.waveformList!.isNotEmpty) {
+      final samples = widget.message.waveformList!;
+      VoiceNoteService.cacheWaveform(widget.message.id, samples);
+      if (widget.message.mediaUrl != null) {
+        VoiceNoteService.cacheWaveform(widget.message.mediaUrl!, samples);
+      }
+      if (mounted) {
+        setState(() {
+          _barHeights = samples.map((s) => (5.0 + s * 19.0).clamp(4.0, 24.0)).toList();
+        });
+      }
+      return;
+    }
+
+    // 2. Check in-memory waveform cache by message ID or mediaUrl path
     if (VoiceNoteService.messageWaveforms.containsKey(widget.message.id)) {
       final samples = VoiceNoteService.messageWaveforms[widget.message.id]!;
       if (mounted) {
@@ -108,7 +123,19 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
       return;
     }
 
-    // 2. If audio file already exists locally on sender device or cache
+    if (widget.message.mediaUrl != null &&
+        VoiceNoteService.messageWaveforms.containsKey(widget.message.mediaUrl!)) {
+      final samples = VoiceNoteService.messageWaveforms[widget.message.mediaUrl!]!;
+      VoiceNoteService.cacheWaveform(widget.message.id, samples);
+      if (mounted) {
+        setState(() {
+          _barHeights = samples.map((s) => (5.0 + s * 19.0).clamp(4.0, 24.0)).toList();
+        });
+      }
+      return;
+    }
+
+    // 3. If audio file already exists locally on sender device or cache
     String? filePath;
     if (widget.message.mediaUrl != null && File(widget.message.mediaUrl!).existsSync()) {
       filePath = widget.message.mediaUrl!;
@@ -125,7 +152,8 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> with SingleTick
 
       // Extract real physical waveform from audio file
       final samples = await VoiceNoteService.extractWaveformFromAudioFile(filePath, barCount: 34);
-      VoiceNoteService.messageWaveforms[widget.message.id] = samples;
+      VoiceNoteService.cacheWaveform(widget.message.id, samples);
+      VoiceNoteService.cacheWaveform(filePath, samples);
 
       // If duration is missing, extract it with temp player instance
       if (_totalDuration == Duration.zero) {

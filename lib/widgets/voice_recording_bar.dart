@@ -12,7 +12,7 @@ enum RecordingMode {
 class VoiceRecordingBar extends StatefulWidget {
   final RecordingMode initialMode;
   final VoidCallback onCancel;
-  final Function(String audioPath, int durationSeconds) onSend;
+  final Function(String audioPath, int durationSeconds, [List<double>? waveformSamples]) onSend;
 
   const VoiceRecordingBar({
     super.key,
@@ -159,9 +159,10 @@ class _VoiceRecordingBarState extends State<VoiceRecordingBar> with SingleTicker
     await _voiceService.stopPreview();
     final result = await _voiceService.stopRecording();
     if (result != null && result['path'] != null) {
-      widget.onSend(result['path'], result['duration'] ?? _duration);
+      final samples = result['samples'] as List<double>?;
+      widget.onSend(result['path'], result['duration'] ?? _duration, samples);
     } else if (_stoppedAudioPath != null) {
-      widget.onSend(_stoppedAudioPath!, _duration > 0 ? _duration : 1);
+      widget.onSend(_stoppedAudioPath!, _duration > 0 ? _duration : 1, _previewWaveformSamples);
     } else {
       widget.onCancel();
     }

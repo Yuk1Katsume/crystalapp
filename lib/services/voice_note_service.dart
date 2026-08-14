@@ -219,6 +219,8 @@ class VoiceNoteService {
       _liveRecordedSamples.clear();
 
       if (path != null && File(path).existsSync()) {
+        messageWaveforms[path] = samples;
+        messageWaveforms[File(path).path] = samples;
         return {
           'path': path,
           'duration': totalSeconds > 0 ? totalSeconds : 1,
@@ -230,6 +232,11 @@ class VoiceNoteService {
     _recordingState = RecordingState.idle;
     _liveRecordedSamples.clear();
     return null;
+  }
+
+  /// Store waveform in static memory cache
+  static void cacheWaveform(String key, List<double> samples) {
+    messageWaveforms[key] = samples;
   }
 
   /// Cancel and delete current recording

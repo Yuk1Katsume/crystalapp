@@ -1100,6 +1100,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final result = await VoiceNoteService().stopRecording();
     final path = result?['path'];
     final dur = result?['duration'] ?? _voiceDuration;
+    final samples = result?['samples'] as List<double>?;
 
     if (mounted) {
       setState(() {
@@ -1111,7 +1112,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
 
     if (path != null && path.isNotEmpty) {
-      _sendVoiceNote(path, dur > 0 ? dur : 1);
+      _sendVoiceNote(path, dur > 0 ? dur : 1, waveformSamples: samples);
     }
   }
 
@@ -1124,11 +1125,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             _isVoiceLocked = false;
           });
         },
-        onSend: (audioPath, durationSeconds) {
+        onSend: (audioPath, durationSeconds, [waveformSamples]) {
           setState(() {
             _isVoiceLocked = false;
           });
-          _sendVoiceNote(audioPath, durationSeconds);
+          _sendVoiceNote(audioPath, durationSeconds, waveformSamples: waveformSamples);
         },
       );
     }
@@ -1351,7 +1352,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     );
   }
 
-  void _sendVoiceNote(String audioPath, int durationSeconds) async {
+  void _sendVoiceNote(String audioPath, int durationSeconds, {List<double>? waveformSamples}) async {
     if (audioPath.isEmpty) return;
 
     if (!isGroup && widget.recipientId != null) {
@@ -1377,6 +1378,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           type: ChatMessageType.audio,
           mediaUrl: audioPath,
           audioDurationSeconds: durationSeconds,
+          waveformSamples: waveformSamples,
         );
       } else if (widget.recipientId != null) {
         await _chatService.sendDirectMessage(
@@ -1385,6 +1387,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           type: ChatMessageType.audio,
           mediaUrl: audioPath,
           audioDurationSeconds: durationSeconds,
+          waveformSamples: waveformSamples,
         );
       }
       _refreshMessages();

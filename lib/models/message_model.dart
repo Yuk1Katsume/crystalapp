@@ -27,9 +27,22 @@ class Message {
   final ChatMessageType type;
   final String? mediaUrl;
   final int? audioDurationSeconds;
+  final String? audioWaveform;
   final bool isRead;
   final bool isStarred;
   final MessageStatus status;
+
+  List<double>? get waveformList {
+    if (audioWaveform == null || audioWaveform!.isEmpty) return null;
+    try {
+      return audioWaveform!
+          .split(',')
+          .map((e) => double.tryParse(e.trim()) ?? 0.15)
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
 
   Message({
     required this.id,
@@ -43,6 +56,7 @@ class Message {
     this.type = ChatMessageType.text,
     this.mediaUrl,
     this.audioDurationSeconds,
+    this.audioWaveform,
     this.isRead = false,
     this.isStarred = false,
     this.status = MessageStatus.sent,
@@ -61,6 +75,7 @@ class Message {
       'type': type.name,
       'mediaUrl': mediaUrl,
       'audioDurationSeconds': audioDurationSeconds,
+      'audioWaveform': audioWaveform,
       'isRead': isRead,
       'isStarred': isStarred,
       'status': status.name,
@@ -85,6 +100,7 @@ class Message {
       ),
       mediaUrl: json['mediaUrl'] as String?,
       audioDurationSeconds: json['audioDurationSeconds'] as int?,
+      audioWaveform: json['audioWaveform'] as String?,
       isRead: json['isRead'] as bool? ?? false,
       isStarred: json['isStarred'] as bool? ?? false,
       status: MessageStatus.values.firstWhere(

@@ -9,6 +9,7 @@ import '../models/message_model.dart';
 import 'e2ee_service.dart';
 import 'local_database_service.dart';
 import 'supabase_config.dart';
+import 'voice_note_service.dart';
 
 /// Prefix that signals the encrypted_content field contains an embedded image
 const String _imgPayloadPrefix = 'IMGENC:';
@@ -123,7 +124,18 @@ class ChatService {
       String payload, String msgId, String chatId) async {
     try {
       Uint8List? encryptedBytes;
-      if (payload.startsWith(_audioPayloadPrefix)) {
+      String? embeddedWaveform;
+
+      if (payload.startsWith('AUDENC_WF:')) {
+        final parts = payload.split(':');
+        if (parts.length >= 3) {
+          try {
+            embeddedWaveform = utf8.decode(base64Decode(parts[1]));
+          } catch (_) {}
+          final audioB64 = parts.sublist(2).join(':');
+          encryptedBytes = Uint8List.fromList(base64Decode(audioB64));
+        }
+      } else if (payload.startsWith(_audioPayloadPrefix)) {
         final base64Data = payload.substring(_audioPayloadPrefix.length);
         encryptedBytes = Uint8List.fromList(base64Decode(base64Data));
       } else if (payload.startsWith('AUDENC_URL:')) {
@@ -142,6 +154,16 @@ class ChatService {
         final dir = await getApplicationDocumentsDirectory();
         final localFile = File('${dir.path}/vn_received_$msgId.m4a');
         await localFile.writeAsBytes(decryptedBytes);
+
+        if (embeddedWaveform != null) {
+          final samples = embeddedWaveform
+              .split(',')
+              .map((e) => double.tryParse(e.trim()) ?? 0.15)
+              .toList();
+          VoiceNoteService.cacheWaveform(msgId, samples);
+          VoiceNoteService.cacheWaveform(localFile.path, samples);
+        }
+
         return localFile.path;
       }
       return null;
@@ -163,6 +185,7 @@ class ChatService {
     bool isSticker = false,
     ChatMessageType type = ChatMessageType.text,
     int? audioDurationSeconds,
+    List<double>? waveformSamples,
   }) async {
     final chatId = getChatId(currentUserId, recipientId);
     final msgId = '${currentUserId}_${DateTime.now().millisecondsSinceEpoch}';
@@ -179,6 +202,20 @@ class ChatService {
       messageType = 'text';
     }
 
+    // Resolve waveform samples if available
+    List<double>? samples = waveformSamples;
+    if (samples == null && mediaUrl != null && VoiceNoteService.messageWaveforms.containsKey(mediaUrl)) {
+      samples = VoiceNoteService.messageWaveforms[mediaUrl];
+    }
+    final waveformStr = samples?.map((s) => s.toStringAsFixed(2)).join(',');
+
+    if (samples != null) {
+      VoiceNoteService.cacheWaveform(msgId, samples);
+      if (mediaUrl != null) {
+        VoiceNoteService.cacheWaveform(mediaUrl, samples);
+      }
+    }
+
     // 1. Save locally in SQLite as pending / sent
     await _localDb.saveLocalMessage(
       id: msgId,
@@ -189,6 +226,7 @@ class ChatService {
       messageType: messageType,
       mediaUrl: mediaUrl,
       audioDurationSeconds: audioDurationSeconds,
+      audioWaveform: waveformStr,
       createdAt: now,
       status: 'pending',
     );
@@ -200,7 +238,12 @@ class ChatService {
       final rawBytes = await File(mediaUrl).readAsBytes();
       final encryptedBytes = E2EEService.encryptBytes(rawBytes, chatId);
       final base64Data = base64Encode(encryptedBytes);
-      encryptedContent = '$_audioPayloadPrefix$base64Data';
+      if (waveformStr != null && waveformStr.isNotEmpty) {
+        final wfB64 = base64Encode(utf8.encode(waveformStr));
+        encryptedContent = 'AUDENC_WF:$wfB64:$base64Data';
+      } else {
+        encryptedContent = '$_audioPayloadPrefix$base64Data';
+      }
     } else if (isSticker && mediaUrl != null) {
       encryptedContent = E2EEService.encryptPayload(mediaUrl, chatId);
     } else if (mediaUrl != null && File(mediaUrl).existsSync()) {
