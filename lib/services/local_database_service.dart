@@ -153,6 +153,30 @@ class LocalDatabaseService {
     );
   }
 
+  /// Retrieve distinct user IDs with whom there are active conversations
+  Future<List<String>> getActiveConversationUserIds(String currentUserId) async {
+    final database = await db;
+    final res = await database.rawQuery('''
+      SELECT DISTINCT 
+        CASE 
+          WHEN sender_id = ? THEN recipient_id 
+          ELSE sender_id 
+        END as other_user_id
+      FROM local_messages
+      WHERE (sender_id = ? OR recipient_id = ?) 
+        AND (group_id NOT LIKE 'group_%' OR group_id IS NULL)
+    ''', [currentUserId, currentUserId, currentUserId]);
+
+    final ids = <String>{};
+    for (var r in res) {
+      final id = r['other_user_id'] as String?;
+      if (id != null && id.isNotEmpty && id != currentUserId) {
+        ids.add(id);
+      }
+    }
+    return ids.toList();
+  }
+
   /// Retrieve local chat history for a conversation
   Future<List<Message>> getLocalMessages(String groupId) async {
     final database = await db;

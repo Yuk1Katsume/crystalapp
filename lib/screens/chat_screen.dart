@@ -1698,7 +1698,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   void _sendImage({ImageSource source = ImageSource.gallery}) async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: source, imageQuality: 85);
+    final picked = await picker.pickImage(
+      source: source,
+      imageQuality: 80,
+      maxWidth: 1280,
+      maxHeight: 1280,
+    );
     if (picked == null) return;
 
     if (isGroup) {

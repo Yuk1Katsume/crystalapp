@@ -14,13 +14,91 @@ import 'voice_note_service.dart';
 /// Prefix that signals the encrypted_content field contains an embedded image
 const String _imgPayloadPrefix = 'IMGENC:';
 const String _audioPayloadPrefix = 'AUDENC:';
-/// Max bytes to embed directly in the message payload (~1.5 MB raw → ~2 MB base64)
-const int _maxEmbedBytes = 1500000;
 
 class ChatService {
   SupabaseClient get _supabase => SupabaseConfig.client;
   final LocalDatabaseService _localDb = LocalDatabaseService();
   String get currentUserId => fb_auth.FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  StreamSubscription? _globalIncomingSub;
+  final StreamController<void> _incomingMessagesNotification = StreamController<void>.broadcast();
+  Stream<void> get onNewIncomingMessage => _incomingMessagesNotification.stream;
+
+  /// Start global listener to ingest incoming messages for current user into SQLite in real time
+  void startGlobalIncomingListener() {
+    _globalIncomingSub?.cancel();
+    if (currentUserId.isEmpty) return;
+
+    _globalIncomingSub = _supabase
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .eq('recipient_id', currentUserId)
+        .listen((data) async {
+          bool receivedAny = false;
+          for (var item in data) {
+            final senderId = item['sender_id'] as String? ?? '';
+            if (senderId.isEmpty || senderId == currentUserId) continue;
+
+            final msgId = item['id'].toString();
+            final chatId = item['group_id'] as String? ?? getChatId(currentUserId, senderId);
+            final encryptedContent = item['encrypted_content'] as String? ?? '';
+            final messageType = item['message_type'] as String? ?? 'text';
+
+            String decryptedText;
+            String? localMediaPath;
+            String? embeddedWaveform;
+
+            final isImg = messageType == 'image' || encryptedContent.startsWith(_imgPayloadPrefix) || encryptedContent.startsWith('IMGENC:');
+            final isAud = messageType == 'audio' || encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:') || encryptedContent.startsWith('AUDENC_URL:');
+
+            if (isImg && (encryptedContent.startsWith(_imgPayloadPrefix) || encryptedContent.startsWith('IMGENC:'))) {
+              decryptedText = '📷 Imagen';
+              localMediaPath = await _extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
+            } else if (isAud && (encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:') || encryptedContent.startsWith('AUDENC_URL:'))) {
+              decryptedText = '🎤 Mensaje de voz';
+              localMediaPath = await _extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
+              if (encryptedContent.startsWith('AUDENC_WF:')) {
+                final parts = encryptedContent.split(':');
+                if (parts.length >= 3) {
+                  try {
+                    embeddedWaveform = utf8.decode(base64Decode(parts[1]));
+                  } catch (_) {}
+                }
+              }
+            } else if (messageType == 'sticker') {
+              decryptedText = '🎨 Sticker';
+              localMediaPath = E2EEService.decryptPayload(encryptedContent, chatId);
+            } else {
+              decryptedText = E2EEService.decryptPayload(encryptedContent, chatId);
+            }
+
+            await _localDb.saveLocalMessage(
+              id: msgId,
+              senderId: senderId,
+              recipientId: currentUserId,
+              groupId: chatId,
+              text: decryptedText,
+              messageType: isAud ? 'audio' : (isImg ? 'image' : messageType),
+              mediaUrl: localMediaPath,
+              audioWaveform: embeddedWaveform,
+              createdAt: DateTime.tryParse(item['created_at']?.toString() ?? '') ?? DateTime.now(),
+              isRead: false,
+              status: 'delivered',
+            );
+
+            // Delete consumed message from Supabase relay
+            try {
+              await _supabase.from('messages').delete().eq('id', item['id']);
+            } catch (_) {}
+
+            receivedAny = true;
+          }
+
+          if (receivedAny && !_incomingMessagesNotification.isClosed) {
+            _incomingMessagesNotification.add(null);
+          }
+        });
+  }
 
   /// Stream Direct E2EE Messages using Local SQLite
   Stream<List<Message>> getChatMessagesWithUser(String recipientId) {
@@ -52,15 +130,27 @@ class ChatService {
 
             String decryptedText;
             String? localMediaPath;
+            String? embeddedWaveform;
 
-            if (messageType == 'image' && encryptedContent.startsWith(_imgPayloadPrefix)) {
+            final isImg = messageType == 'image' || encryptedContent.startsWith(_imgPayloadPrefix) || encryptedContent.startsWith('IMGENC:');
+            final isAud = messageType == 'audio' || encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:') || encryptedContent.startsWith('AUDENC_URL:');
+
+            if (isImg && (encryptedContent.startsWith(_imgPayloadPrefix) || encryptedContent.startsWith('IMGENC:'))) {
               // Image is embedded in the payload as encrypted base64
               decryptedText = '📷 Imagen';
               localMediaPath = await _extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
-            } else if (messageType == 'audio' && (encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_URL:'))) {
+            } else if (isAud && (encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:') || encryptedContent.startsWith('AUDENC_URL:'))) {
               // Voice note is encrypted with E2EE
               decryptedText = '🎤 Mensaje de voz';
               localMediaPath = await _extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
+              if (encryptedContent.startsWith('AUDENC_WF:')) {
+                final parts = encryptedContent.split(':');
+                if (parts.length >= 3) {
+                  try {
+                    embeddedWaveform = utf8.decode(base64Decode(parts[1]));
+                  } catch (_) {}
+                }
+              }
             } else if (messageType == 'sticker') {
               decryptedText = '🎨 Sticker';
               localMediaPath = E2EEService.decryptPayload(encryptedContent, chatId);
@@ -74,8 +164,9 @@ class ChatService {
               recipientId: item['recipient_id'],
               groupId: chatId,
               text: decryptedText,
-              messageType: messageType,
+              messageType: isAud ? 'audio' : (isImg ? 'image' : messageType),
               mediaUrl: localMediaPath,
+              audioWaveform: embeddedWaveform,
               createdAt: DateTime.parse(item['created_at']),
               isRead: false,
               status: 'delivered',
@@ -92,6 +183,7 @@ class ChatService {
           if (hasNewIncoming) {
             final updatedLocalMsgs = await _localDb.getLocalMessages(chatId);
             if (!controller.isClosed) controller.add(updatedLocalMsgs);
+            if (!_incomingMessagesNotification.isClosed) _incomingMessagesNotification.add(null);
           }
         });
 
@@ -249,10 +341,7 @@ class ChatService {
     } else if (mediaUrl != null && File(mediaUrl).existsSync()) {
       // Embed encrypted image bytes directly in the payload
       final rawBytes = await File(mediaUrl).readAsBytes();
-      final bytesToSend = rawBytes.length > _maxEmbedBytes
-          ? rawBytes.sublist(0, _maxEmbedBytes)
-          : rawBytes;
-      final encryptedBytes = E2EEService.encryptBytes(bytesToSend, chatId);
+      final encryptedBytes = E2EEService.encryptBytes(rawBytes, chatId);
       final base64Data = base64Encode(encryptedBytes);
       encryptedContent = '$_imgPayloadPrefix$base64Data';
     } else if (mediaUrl != null && mediaUrl.startsWith('http')) {

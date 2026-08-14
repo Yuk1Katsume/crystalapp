@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -38,14 +39,12 @@ class GroupChatService {
         createdAt: DateTime.now(),
       );
 
-      // Save to Firestore with a strict 3-second timeout
+      // Save to Firestore with timeout
       try {
-        await docRef.set(group.toJson()).timeout(const Duration(seconds: 3));
-      } catch (_) {
-        // Continue even if Firestore times out so group creation never blocks
-      }
+        await docRef.set(group.toJson()).timeout(const Duration(seconds: 4));
+      } catch (_) {}
 
-      // Also persist to Supabase groups table if configured
+      // Also persist to Supabase groups table
       try {
         await SupabaseConfig.client.from('groups').upsert({
           'id': group.id,
@@ -55,7 +54,7 @@ class GroupChatService {
           'member_ids': group.memberIds,
           'admin_id': group.adminId,
           'created_at': group.createdAt.toIso8601String(),
-        }).timeout(const Duration(seconds: 3));
+        }).timeout(const Duration(seconds: 4));
       } catch (_) {}
 
       return group;
@@ -101,17 +100,88 @@ class GroupChatService {
     return null;
   }
 
-  /// Stream of user groups
+  /// Stream of user groups (resilient multi-source Supabase + Firestore real-time)
   Stream<List<GroupModel>> get myGroups {
     final user = _auth.currentUser;
     if (user == null) return Stream.value([]);
+    final myUid = user.uid;
 
-    return _firestore
+    final controller = StreamController<List<GroupModel>>();
+    final Map<String, GroupModel> currentGroupsMap = {};
+
+    void emitGroups() {
+      if (!controller.isClosed) {
+        final sortedList = currentGroupsMap.values.toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        controller.add(sortedList);
+      }
+    }
+
+    // 1. Initial snapshot from Supabase
+    SupabaseConfig.client.from('groups').select().then((res) {
+      for (var item in res) {
+        final members = List<String>.from(item['member_ids'] ?? item['memberIds'] ?? []);
+        if (members.contains(myUid)) {
+          currentGroupsMap[item['id']] = GroupModel(
+            id: item['id'],
+            name: item['name'] ?? 'Grupo',
+            description: item['description'],
+            iconUrl: item['icon_url'] ?? item['iconUrl'],
+            memberIds: members,
+            adminId: item['admin_id'] ?? item['adminId'] ?? '',
+            createdAt: DateTime.tryParse(item['created_at'] ?? item['createdAt'] ?? '') ?? DateTime.now(),
+          );
+        }
+      }
+      emitGroups();
+    }).catchError((_) {});
+
+    // 2. Real-time stream from Supabase groups table
+    final sbSub = SupabaseConfig.client
+        .from('groups')
+        .stream(primaryKey: ['id'])
+        .listen((data) {
+          final Set<String> currentIdsInStream = {};
+          for (var item in data) {
+            final members = List<String>.from(item['member_ids'] ?? item['memberIds'] ?? []);
+            final id = item['id'] as String;
+            currentIdsInStream.add(id);
+
+            if (members.contains(myUid)) {
+              currentGroupsMap[id] = GroupModel(
+                id: id,
+                name: item['name'] ?? 'Grupo',
+                description: item['description'],
+                iconUrl: item['icon_url'] ?? item['iconUrl'],
+                memberIds: members,
+                adminId: item['admin_id'] ?? item['adminId'] ?? '',
+                createdAt: DateTime.tryParse(item['created_at'] ?? item['createdAt'] ?? '') ?? DateTime.now(),
+              );
+            } else {
+              currentGroupsMap.remove(id);
+            }
+          }
+          emitGroups();
+        }, onError: (_) {});
+
+    // 3. Real-time stream from Firestore
+    final fsSub = _firestore
         .collection('groups')
-        .where('memberIds', arrayContains: user.uid)
+        .where('memberIds', arrayContains: myUid)
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map((doc) => GroupModel.fromJson(doc.data())).toList());
+        .listen((snapshot) {
+          for (var doc in snapshot.docs) {
+            currentGroupsMap[doc.id] = GroupModel.fromJson(doc.data());
+          }
+          emitGroups();
+        }, onError: (_) {});
+
+    controller.onCancel = () {
+      sbSub.cancel();
+      fsSub.cancel();
+    };
+
+    return controller.stream;
   }
 
   /// Find all groups in common between the current user and another user
@@ -176,21 +246,61 @@ class GroupChatService {
     }
   }
 
-  /// Add new members to group
+  /// Add new members to group across Firestore and Supabase
   Future<void> addMembersToGroup(String groupId, List<String> newMemberIds) async {
+    // 1. Firestore
     try {
       await _firestore.collection('groups').doc(groupId).update({
         'memberIds': FieldValue.arrayUnion(newMemberIds),
       }).timeout(const Duration(seconds: 4));
     } catch (_) {}
+
+    // 2. Supabase
+    try {
+      final res = await SupabaseConfig.client
+          .from('groups')
+          .select('member_ids')
+          .eq('id', groupId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 4));
+      
+      final currentList = List<String>.from(res?['member_ids'] ?? []);
+      final updatedList = {...currentList, ...newMemberIds}.toList();
+      
+      await SupabaseConfig.client
+          .from('groups')
+          .update({'member_ids': updatedList})
+          .eq('id', groupId)
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {}
   }
 
-  /// Remove a member or leave group
+  /// Remove a member or leave group across Firestore and Supabase
   Future<void> removeMemberFromGroup(String groupId, String memberId) async {
+    // 1. Firestore
     try {
       await _firestore.collection('groups').doc(groupId).update({
         'memberIds': FieldValue.arrayRemove([memberId]),
       }).timeout(const Duration(seconds: 4));
+    } catch (_) {}
+
+    // 2. Supabase
+    try {
+      final res = await SupabaseConfig.client
+          .from('groups')
+          .select('member_ids')
+          .eq('id', groupId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 4));
+      
+      final currentList = List<String>.from(res?['member_ids'] ?? []);
+      currentList.remove(memberId);
+      
+      await SupabaseConfig.client
+          .from('groups')
+          .update({'member_ids': currentList})
+          .eq('id', groupId)
+          .timeout(const Duration(seconds: 4));
     } catch (_) {}
   }
 

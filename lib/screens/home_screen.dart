@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -27,11 +28,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late Animation<double> _expandAnimation;
   final GroupChatService _groupService = GroupChatService();
   final AuthService _authService = AuthService();
+  final ChatService _chatService = ChatService();
+  final LocalDatabaseService _localDb = LocalDatabaseService();
   final ContactsServiceManager _contactsService = ContactsServiceManager();
   final currentUser = FirebaseAuth.instance.currentUser;
 
   bool _isFabMenuOpen = false;
   Map<String, String> _phoneContactNames = {};
+  StreamSubscription? _incomingMsgSub;
 
   @override
   void initState() {
@@ -47,6 +51,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _ensureProfileSaved();
     _loadPhoneContacts();
+    _chatService.startGlobalIncomingListener();
+    _incomingMsgSub = _chatService.onNewIncomingMessage.listen((_) {
+      if (mounted) setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkUpdate());
   }
 
@@ -91,6 +99,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _incomingMsgSub?.cancel();
     _tabController.dispose();
     _fabAnimationController.dispose();
     super.dispose();
@@ -174,19 +183,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDirectChatsList() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: SupabaseConfig.client
-          .from('users')
-          .stream(primaryKey: ['id'])
-          .map((data) => data.where((item) => item['id'] != currentUser?.uid).toList()),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+    final myUid = currentUser?.uid ?? '';
+    if (myUid.isEmpty) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
+    }
+
+    return FutureBuilder<List<String>>(
+      future: _localDb.getActiveConversationUserIds(myUid),
+      builder: (context, activeIdsSnap) {
+        final activeUserIds = activeIdsSnap.data ?? [];
+
+        if (activeIdsSnap.connectionState == ConnectionState.waiting && !activeIdsSnap.hasData) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
         }
 
-        final users = snapshot.data ?? [];
-
-        if (users.isEmpty) {
+        if (activeUserIds.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -197,16 +208,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'No tienes conversaciones activas.',
                   style: TextStyle(color: Colors.white54, fontSize: 15),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
+                const Text(
+                  'Busca un usuario para empezar a chatear',
+                  style: TextStyle(color: Colors.white30, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
                   icon: const Icon(Icons.search, color: Colors.white),
                   label: const Text('Buscar Usuarios / Amigos 🔍', style: TextStyle(color: Colors.white)),
-                  onPressed: () {
-                    Navigator.push(
+                  onPressed: () async {
+                    await Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
                     );
+                    if (mounted) setState(() {});
                   },
                 ),
               ],
@@ -214,88 +231,136 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: users.length,
-          itemBuilder: (context, index) {
-            final userData = users[index];
-            final userId = userData['id'];
-            final rawDisplayName = userData['display_name'] ?? userData['username'] ?? 'Usuario';
-            final contactName = _phoneContactNames[userId];
-            final displayName = contactName ?? rawDisplayName;
-            final isFromContacts = contactName != null;
-            final username = userData['username'] ?? '';
-            final isOnline = userData['is_online'] ?? false;
-            final avatarUrl = userData['avatar_url'];
+        return StreamBuilder<List<Map<String, dynamic>>>(
+          stream: SupabaseConfig.client
+              .from('users')
+              .stream(primaryKey: ['id'])
+              .map((data) => data.where((item) => activeUserIds.contains(item['id'])).toList()),
+          builder: (context, snapshot) {
+            final users = snapshot.data ?? [];
 
-            return ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              leading: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: const Color(0xFF1E1E1E),
-                    backgroundImage: (avatarUrl != null && avatarUrl.toString().startsWith('http'))
-                        ? NetworkImage(avatarUrl)
-                        : null,
-                    child: (avatarUrl == null || !avatarUrl.toString().startsWith('http'))
-                        ? Text(
-                            displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                          )
-                        : null,
-                  ),
-                  if (isOnline)
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: Colors.greenAccent,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFF0A0A0A), width: 2),
-                        ),
-                      ),
+            if (users.isEmpty && snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
+            }
+
+            if (users.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.mark_chat_unread_outlined, size: 64, color: Colors.white24),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'No tienes conversaciones activas.',
+                      style: TextStyle(color: Colors.white54, fontSize: 15),
                     ),
-                ],
-              ),
-              title: Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      displayName,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                      overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Busca un usuario para empezar a chatear',
+                      style: TextStyle(color: Colors.white30, fontSize: 13),
                     ),
-                  ),
-                  if (isFromContacts) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF1744).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text('Agenda 📱', style: TextStyle(color: Color(0xFFFF1744), fontSize: 9, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                      icon: const Icon(Icons.search, color: Colors.white),
+                      label: const Text('Buscar Usuarios / Amigos 🔍', style: TextStyle(color: Colors.white)),
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+                        );
+                        if (mounted) setState(() {});
+                      },
                     ),
                   ],
-                ],
-              ),
-              subtitle: _LastMessagePreview(
-                userId: userId,
-                currentUserId: currentUser?.uid ?? '',
-              ),
-              trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white24, size: 16),
-              onTap: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(recipientId: userId, recipientName: displayName),
+                ),
+              );
+            }
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: users.length,
+              itemBuilder: (context, index) {
+                final userData = users[index];
+                final userId = userData['id'];
+                final rawDisplayName = userData['display_name'] ?? userData['username'] ?? 'Usuario';
+                final contactName = _phoneContactNames[userId];
+                final displayName = contactName ?? rawDisplayName;
+                final isFromContacts = contactName != null;
+                final username = userData['username'] ?? '';
+                final isOnline = userData['is_online'] ?? false;
+                final avatarUrl = userData['avatar_url'];
+
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  leading: Stack(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: const Color(0xFF1E1E1E),
+                        backgroundImage: (avatarUrl != null && avatarUrl.toString().startsWith('http'))
+                            ? NetworkImage(avatarUrl)
+                            : null,
+                        child: (avatarUrl == null || !avatarUrl.toString().startsWith('http'))
+                            ? Text(
+                                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                              )
+                            : null,
+                      ),
+                      if (isOnline)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.greenAccent,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFF0A0A0A), width: 2),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          displayName,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isFromContacts) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF1744).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text('Agenda 📱', style: TextStyle(color: Color(0xFFFF1744), fontSize: 9, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: _LastMessagePreview(
+                    userId: userId,
+                    currentUserId: currentUser?.uid ?? '',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white24, size: 16),
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChatScreen(recipientId: userId, recipientName: displayName),
+                      ),
+                    );
+                    if (mounted) setState(() {});
+                  },
                 );
-                if (mounted) setState(() {});
               },
             );
           },
