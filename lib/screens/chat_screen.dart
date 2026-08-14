@@ -16,6 +16,8 @@ import 'search_users_screen.dart';
 import 'image_viewer_screen.dart';
 import 'user_profile_screen.dart';
 import 'group_info_screen.dart';
+import 'call_screen.dart';
+import '../services/call_service.dart';
 import '../widgets/adaptive_image_bubble.dart';
 import '../widgets/voice_recording_bar.dart';
 import '../widgets/voice_message_bubble.dart';
@@ -656,6 +658,94 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     ),
                   ),
                 ),
+                actions: [
+                  if (!isGroup && widget.recipientId != null)
+                    IconButton(
+                      icon: const Icon(Icons.call_rounded, color: Colors.white, size: 22),
+                      tooltip: 'Llamada E2EE',
+                      onPressed: () async {
+                        final callId = await CallService().startCall(
+                          receiverId: widget.recipientId!,
+                          receiverName: title,
+                          receiverAvatar: _recipientAvatarUrl,
+                        );
+                        if (mounted) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => CallScreen(
+                                callId: callId,
+                                otherUserId: widget.recipientId!,
+                                otherUserName: title,
+                                otherUserAvatar: _recipientAvatarUrl,
+                                isOutgoing: true,
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 22),
+                    color: const Color(0xFF1E1E1E),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    onSelected: (val) async {
+                      if (val == 'info') {
+                        if (isGroup && widget.groupId != null) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => GroupInfoScreen(
+                                groupId: widget.groupId!,
+                                groupName: title,
+                              ),
+                            ),
+                          );
+                        } else if (widget.recipientId != null) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => UserProfileScreen(
+                                recipientId: widget.recipientId!,
+                                recipientName: title,
+                                initialAvatarUrl: _recipientAvatarUrl,
+                              ),
+                            ),
+                          );
+                        }
+                      } else if (val == 'clear') {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Función de vaciar chat disponible en los ajustes del chat'),
+                            backgroundColor: Color(0xFF1E1E1E),
+                          ),
+                        );
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'info',
+                        child: Row(
+                          children: [
+                            Icon(isGroup ? Icons.group_outlined : Icons.person_outline_rounded, color: Colors.white70, size: 18),
+                            const SizedBox(width: 10),
+                            Text(isGroup ? 'Info. del grupo' : 'Ver contacto', style: const TextStyle(color: Colors.white)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'clear',
+                        child: Row(
+                          children: [
+                            Icon(Icons.cleaning_services_rounded, color: Colors.white70, size: 18),
+                            SizedBox(width: 10),
+                            Text('Vaciar chat', style: TextStyle(color: Colors.white)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
         body: Column(
           children: [
@@ -835,17 +925,17 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   Widget _buildStatusIcon(Message msg) {
     if (msg.isRead || msg.status == MessageStatus.read) {
-      return const Icon(Icons.done_all_rounded, size: 15, color: Color(0xFFFF1744)); // Neon pink (#FF1744)
+      return const Icon(Icons.done_all_rounded, size: 15, color: Color(0xFF53BDEB)); // Bright WhatsApp Sky Blue for contrast on pink/dark bubbles
     }
     switch (msg.status) {
       case MessageStatus.pending:
-        return const Icon(Icons.access_time_rounded, size: 13, color: Colors.white60);
+        return const Icon(Icons.access_time_rounded, size: 13, color: Colors.white70);
       case MessageStatus.sent:
-        return const Icon(Icons.done_rounded, size: 14, color: Colors.white60);
+        return const Icon(Icons.done_rounded, size: 14, color: Colors.white70);
       case MessageStatus.delivered:
         return const Icon(Icons.done_all_rounded, size: 14, color: Colors.white70);
       case MessageStatus.read:
-        return const Icon(Icons.done_all_rounded, size: 15, color: Color(0xFFFF1744)); // Neon pink (#FF1744)
+        return const Icon(Icons.done_all_rounded, size: 15, color: Color(0xFF53BDEB));
     }
   }
 
@@ -923,14 +1013,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   margin: const EdgeInsets.only(top: 2),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: const Color(0xCC1E1E1E), // Semi-transparent dark mini-pill
+                    color: const Color(0xCC1E1E1E),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (msg.isStarred) ...[
-                        const Icon(Icons.star_rounded, size: 12, color: Color(0xFFFF1744)),
+                        const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
                         const SizedBox(width: 3),
                       ],
                       Text(
@@ -960,11 +1050,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+      child: Container(
         margin: const EdgeInsets.symmetric(vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
         decoration: BoxDecoration(
           color: bubbleColor,
           border: isSelected ? Border.all(color: const Color(0xFFFF1744), width: 2.0) : null,
@@ -975,8 +1063,10 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             bottomRight: Radius.circular(isMe ? 4 : 16),
           ),
         ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             if (isGroup && !isMe && msg.senderName != null)
               Padding(
@@ -990,7 +1080,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   ),
                 ),
               ),
-            if (msg.type == ChatMessageType.image && msg.mediaUrl != null)
+            if (msg.type == ChatMessageType.image && msg.mediaUrl != null) ...[
               AdaptiveImageBubble(
                 mediaUrl: msg.mediaUrl!,
                 onTap: () {
@@ -1019,25 +1109,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     ),
                   );
                 },
-              )
-            else
-              Text(
-                msg.text,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
               ),
-            const SizedBox(height: 4),
-            Align(
-              alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-              child: Row(
+              const SizedBox(height: 4),
+              Row(
                 mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   if (msg.isStarred) ...[
-                    const Icon(Icons.star_rounded, size: 12, color: Color(0xFFFF1744)),
+                    const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
                     const SizedBox(width: 3),
                   ],
                   Text(
                     '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 10),
+                    style: const TextStyle(color: Colors.white70, fontSize: 10),
                   ),
                   if (isMe) ...[
                     const SizedBox(width: 4),
@@ -1045,7 +1129,41 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   ],
                 ],
               ),
-            ),
+            ] else ...[
+              // WhatsApp style auto-adjusting bubble (tight wrapper)
+              Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.end,
+                spacing: 8,
+                runSpacing: 2,
+                children: [
+                  Text(
+                    msg.text,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (msg.isStarred) ...[
+                          const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
+                          const SizedBox(width: 3),
+                        ],
+                        Text(
+                          '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 10),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 4),
+                          _buildStatusIcon(msg),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -1188,7 +1306,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       color: const Color(0xFF1F2428),
                       borderRadius: BorderRadius.circular(26),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    padding: _isVoiceHolding
+                        ? const EdgeInsets.symmetric(horizontal: 14)
+                        : const EdgeInsets.only(left: 4, right: 6),
                     child: _isVoiceHolding
                         ? Row(
                             children: [

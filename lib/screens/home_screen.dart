@@ -6,18 +6,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/message_model.dart';
 import '../models/status_model.dart';
+import '../models/call_model.dart';
 import '../services/group_chat_service.dart';
 import '../services/auth_service.dart';
 import '../services/local_database_service.dart';
 import '../services/supabase_config.dart';
 import '../services/chat_service.dart';
 import '../services/status_service.dart';
+import '../services/call_service.dart';
 import 'chat_screen.dart';
 import 'search_users_screen.dart';
 import 'create_group_screen.dart';
 import 'create_status_screen.dart';
 import 'status_view_screen.dart';
 import 'settings_screen.dart';
+import 'call_screen.dart';
 import '../services/update_service.dart';
 import '../services/contacts_service.dart';
 
@@ -73,8 +76,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _refreshUnreadCount();
       if (mounted) setState(() {});
     });
+
+    CallService().startIncomingCallListener();
+    _incomingCallSub = CallService().onIncomingCall.listen((data) {
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CallScreen(
+              callId: data['id'] ?? data['doc_id'] ?? '',
+              otherUserId: data['caller_id'] ?? '',
+              otherUserName: data['caller_name'] ?? 'Contacto',
+              otherUserAvatar: data['caller_avatar'],
+              isOutgoing: false,
+              isVideo: data['is_video'] ?? false,
+            ),
+          ),
+        );
+      }
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkUpdate());
   }
+
+  StreamSubscription? _incomingCallSub;
 
   void _refreshUnreadCount() async {
     final uid = currentUser?.uid;
@@ -136,6 +161,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _incomingCallSub?.cancel();
     _incomingMsgSub?.cancel();
     _searchController.dispose();
     _fabAnimationController.dispose();
@@ -393,10 +419,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
     }
 
-    return FutureBuilder<List<String>>(
-      future: _localDb.getActiveConversationUserIds(myUid),
-      builder: (context, activeIdsSnap) {
-        final activeUserIds = activeIdsSnap.data ?? [];
+    return FutureBuilder<List<dynamic>>(
+      future: Future.wait([
+        _localDb.getActiveConversationUserIds(myUid),
+        _localDb.getUnreadConversationIds(myUid),
+        _localDb.getFavoriteConversationIds(),
+      ]),
+      builder: (context, snapshot) {
+        final activeUserIds = (snapshot.data?[0] as List<String>?) ?? [];
+        final unreadIds = (snapshot.data?[1] as Set<String>?) ?? {};
+        final favoriteIds = (snapshot.data?[2] as Set<String>?) ?? {};
 
         return StreamBuilder<List<GroupModel>>(
           stream: _groupService.myGroups,
@@ -433,17 +465,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 final directUsers = usersSnap.data ?? [];
 
                 // Filter direct users by search
-                final filteredUsers = directUsers.where((u) {
+                var filteredUsers = directUsers.where((u) {
                   if (_searchQuery.isEmpty) return true;
                   final name = (_phoneContactNames[u['id']] ?? u['display_name'] ?? u['username'] ?? '').toString().toLowerCase();
                   return name.contains(_searchQuery);
                 }).toList();
 
                 // Filter groups by search
-                final filteredGroups = groups.where((g) {
+                var filteredGroups = groups.where((g) {
                   if (_searchQuery.isEmpty) return true;
                   return g.name.toLowerCase().contains(_searchQuery);
                 }).toList();
+
+                // Apply selected tab filter
+                if (_selectedFilter == 'No leídos') {
+                  filteredUsers = filteredUsers.where((u) => unreadIds.contains(u['id'])).toList();
+                  filteredGroups = filteredGroups.where((g) => unreadIds.contains(g.id)).toList();
+
+                  if (filteredUsers.isEmpty && filteredGroups.isEmpty) {
+                    return _buildEmptyState(
+                      'No tienes mensajes no leídos.',
+                      '¡Todas tus conversaciones están al día! 🌸',
+                    );
+                  }
+                } else if (_selectedFilter == 'Favoritos') {
+                  filteredUsers = filteredUsers.where((u) => favoriteIds.contains(u['id'])).toList();
+                  filteredGroups = filteredGroups.where((g) => favoriteIds.contains(g.id)).toList();
+
+                  if (filteredUsers.isEmpty && filteredGroups.isEmpty) {
+                    return _buildEmptyState(
+                      'No tienes chats favoritos.',
+                      'Mantén presionado un chat para añadirlo a tus favoritos ⭐',
+                    );
+                  }
+                }
 
                 final totalCount = filteredUsers.length + filteredGroups.length;
 
@@ -1184,79 +1239,198 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // TAB 2: REGISTRO DE LLAMADAS
   // ==========================================
   Widget _buildCallsTab() {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return FutureBuilder<List<CallLog>>(
+      future: _localDb.getCallLogs(),
+      builder: (context, snapshot) {
+        final callLogs = snapshot.data ?? [];
+
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           children: [
-            const Text(
-              'Llamadas',
-              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Llamadas',
+                  style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
+                  color: const Color(0xFF1E1E1E),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  onSelected: (val) async {
+                    if (val == 'clear') {
+                      await _localDb.clearAllCallLogs();
+                      if (mounted) setState(() {});
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem(
+                      value: 'clear',
+                      child: Text('Borrar registro de llamadas', style: TextStyle(color: Colors.white)),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            IconButton(
-              icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
-              onPressed: () {},
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const CircleAvatar(
-            radius: 24,
-            backgroundColor: Color(0xFFFF1744),
-            child: Icon(Icons.link_rounded, color: Colors.white, size: 24),
-          ),
-          title: const Text(
-            'Crear enlace de llamada',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          subtitle: const Text(
-            'Comparte un enlace para tu llamada cifrada',
-            style: TextStyle(color: Colors.white38, fontSize: 13),
-          ),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Llamadas cifradas de voz y video en camino 📞'),
-                backgroundColor: Color(0xFF1E1E1E),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(
+                radius: 24,
+                backgroundColor: Color(0xFFFF1744),
+                child: Icon(Icons.link_rounded, color: Colors.white, size: 24),
               ),
-            );
-          },
-        ),
-        const Divider(color: Colors.white12, height: 32),
-        const Text(
-          'RECIENTES',
-          style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
-        ),
-        const SizedBox(height: 32),
-        Center(
-          child: Column(
-            children: [
-              Icon(Icons.call_end_outlined, size: 48, color: Colors.white.withOpacity(0.2)),
-              const SizedBox(height: 12),
-              const Text(
-                'No hay llamadas recientes',
-                style: TextStyle(color: Colors.white38, fontSize: 14),
+              title: const Text(
+                'Crear enlace de llamada',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
               ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock_rounded, size: 14, color: Colors.white30),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Tus llamadas personales están cifradas de extremo a extremo',
-                    style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11),
+              subtitle: const Text(
+                'Comparte un enlace para tu llamada cifrada',
+                style: TextStyle(color: Colors.white38, fontSize: 13),
+              ),
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Enlace de llamada cifrada copiado al portapapeles 📋'),
+                    backgroundColor: Color(0xFF1E1E1E),
                   ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
+                );
+              },
+            ),
+            const Divider(color: Colors.white12, height: 32),
+            const Text(
+              'RECIENTES',
+              style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+            ),
+            const SizedBox(height: 12),
+
+            if (callLogs.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 40),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(Icons.phone_missed_rounded, size: 48, color: Colors.white.withOpacity(0.2)),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'No hay llamadas recientes',
+                        style: TextStyle(color: Colors.white38, fontSize: 14),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.lock_rounded, size: 14, color: Colors.white30),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Tus llamadas personales están cifradas de extremo a extremo',
+                            style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...callLogs.map((log) {
+                final isMissed = log.status == CallStatus.missed || log.status == CallStatus.rejected;
+                final isIncoming = log.direction == CallDirection.incoming;
+
+                IconData directionIcon;
+                Color directionColor;
+
+                if (isMissed) {
+                  directionIcon = Icons.call_missed_rounded;
+                  directionColor = const Color(0xFFFF1744);
+                } else if (isIncoming) {
+                  directionIcon = Icons.call_received_rounded;
+                  directionColor = Colors.greenAccent;
+                } else {
+                  directionIcon = Icons.call_made_rounded;
+                  directionColor = Colors.white70;
+                }
+
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  leading: CircleAvatar(
+                    radius: 24,
+                    backgroundColor: const Color(0xFF1E1E1E),
+                    backgroundImage: (log.otherUserAvatar != null && log.otherUserAvatar!.isNotEmpty && log.otherUserAvatar!.startsWith('http'))
+                        ? NetworkImage(log.otherUserAvatar!)
+                        : null,
+                    child: (log.otherUserAvatar == null || !log.otherUserAvatar!.startsWith('http'))
+                        ? Text(
+                            log.otherUserName.isNotEmpty ? log.otherUserName[0].toUpperCase() : '🌸',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                          )
+                        : null,
+                  ),
+                  title: Text(
+                    log.otherUserName,
+                    style: TextStyle(
+                      color: isMissed ? const Color(0xFFFF1744) : Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  subtitle: Row(
+                    children: [
+                      Icon(directionIcon, size: 16, color: directionColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_formatCallTime(log.timestamp)} · ${log.formattedDuration}',
+                        style: const TextStyle(color: Colors.white54, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  trailing: IconButton(
+                    icon: Icon(
+                      log.isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                      color: const Color(0xFFFF1744),
+                    ),
+                    onPressed: () async {
+                      final callId = await CallService().startCall(
+                        receiverId: log.otherUserId,
+                        receiverName: log.otherUserName,
+                        receiverAvatar: log.otherUserAvatar,
+                        isVideo: log.isVideo,
+                      );
+                      if (mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => CallScreen(
+                              callId: callId,
+                              otherUserId: log.otherUserId,
+                              otherUserName: log.otherUserName,
+                              otherUserAvatar: log.otherUserAvatar,
+                              isOutgoing: true,
+                              isVideo: log.isVideo,
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                );
+              }),
+          ],
+        );
+      },
     );
+  }
+
+  String _formatCallTime(DateTime date) {
+    final now = DateTime.now();
+    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+    final timeStr = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    if (isToday) {
+      return 'Hoy $timeStr';
+    } else {
+      return '${date.day}/${date.month} $timeStr';
+    }
   }
 
   // ==========================================

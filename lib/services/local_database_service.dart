@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/message_model.dart';
+import '../models/call_model.dart';
 
 class LocalDatabaseService {
   static final LocalDatabaseService _instance = LocalDatabaseService._internal();
@@ -21,7 +22,7 @@ class LocalDatabaseService {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_messages (
@@ -38,6 +39,28 @@ class LocalDatabaseService {
             is_read INTEGER DEFAULT 1,
             is_starred INTEGER DEFAULT 0,
             status TEXT DEFAULT 'sent'
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE call_logs (
+            id TEXT PRIMARY KEY,
+            caller_id TEXT,
+            caller_name TEXT,
+            caller_avatar TEXT,
+            receiver_id TEXT,
+            receiver_name TEXT,
+            receiver_avatar TEXT,
+            direction TEXT,
+            status TEXT,
+            duration_seconds INTEGER,
+            timestamp TEXT,
+            is_video INTEGER DEFAULT 0
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE favorite_conversations (
+            conversation_id TEXT PRIMARY KEY,
+            created_at TEXT
           )
         ''');
       },
@@ -65,6 +88,32 @@ class LocalDatabaseService {
         if (oldVersion < 6) {
           try {
             await db.execute('ALTER TABLE local_messages ADD COLUMN audio_waveform TEXT');
+          } catch (_) {}
+        }
+        if (oldVersion < 7) {
+          try {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS call_logs (
+                id TEXT PRIMARY KEY,
+                caller_id TEXT,
+                caller_name TEXT,
+                caller_avatar TEXT,
+                receiver_id TEXT,
+                receiver_name TEXT,
+                receiver_avatar TEXT,
+                direction TEXT,
+                status TEXT,
+                duration_seconds INTEGER,
+                timestamp TEXT,
+                is_video INTEGER DEFAULT 0
+              )
+            ''');
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS favorite_conversations (
+                conversation_id TEXT PRIMARY KEY,
+                created_at TEXT
+              )
+            ''');
           } catch (_) {}
         }
       },
@@ -283,4 +332,108 @@ class LocalDatabaseService {
     if (maps.isEmpty) return null;
     return maps.first;
   }
+
+  /// ----------------------------------------
+  /// Call Logs Methods
+  /// ----------------------------------------
+  Future<void> saveCallLog(CallLog log) async {
+    final database = await db;
+    await database.insert(
+      'call_logs',
+      log.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<CallLog>> getCallLogs() async {
+    final database = await db;
+    final maps = await database.query(
+      'call_logs',
+      orderBy: 'timestamp DESC',
+    );
+    return maps.map((e) => CallLog.fromMap(e)).toList();
+  }
+
+  Future<void> deleteCallLog(String id) async {
+    final database = await db;
+    await database.delete(
+      'call_logs',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> clearAllCallLogs() async {
+    final database = await db;
+    await database.delete('call_logs');
+  }
+
+  /// ----------------------------------------
+  /// Favorite Conversations Methods
+  /// ----------------------------------------
+  Future<void> toggleFavorite(String conversationId, bool isFav) async {
+    final database = await db;
+    if (isFav) {
+      await database.insert(
+        'favorite_conversations',
+        {
+          'conversation_id': conversationId,
+          'created_at': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      await database.delete(
+        'favorite_conversations',
+        where: 'conversation_id = ?',
+        whereArgs: [conversationId],
+      );
+    }
+  }
+
+  Future<bool> isConversationFavorite(String conversationId) async {
+    final database = await db;
+    final maps = await database.query(
+      'favorite_conversations',
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+      limit: 1,
+    );
+    return maps.isNotEmpty;
+  }
+
+  Future<Set<String>> getFavoriteConversationIds() async {
+    final database = await db;
+    final maps = await database.query('favorite_conversations');
+    return maps.map((e) => e['conversation_id'] as String).toSet();
+  }
+
+  /// Get list of user IDs / group IDs that have unread messages
+  Future<Set<String>> getUnreadConversationIds(String currentUserId) async {
+    final database = await db;
+    final maps = await database.rawQuery('''
+      SELECT DISTINCT group_id, sender_id 
+      FROM local_messages 
+      WHERE is_read = 0 AND sender_id != ?
+    ''', [currentUserId]);
+
+    final result = <String>{};
+    for (final row in maps) {
+      if (row['group_id'] != null) result.add(row['group_id'] as String);
+      if (row['sender_id'] != null) result.add(row['sender_id'] as String);
+    }
+    return result;
+  }
+
+  /// Get unread message count for a single conversation
+  Future<int> getUnreadCountForConversation(String groupId, String currentUserId) async {
+    final database = await db;
+    final res = await database.rawQuery('''
+      SELECT COUNT(*) as unread_count 
+      FROM local_messages 
+      WHERE group_id = ? AND is_read = 0 AND sender_id != ?
+    ''', [groupId, currentUserId]);
+    return Sqflite.firstIntValue(res) ?? 0;
+  }
 }
+

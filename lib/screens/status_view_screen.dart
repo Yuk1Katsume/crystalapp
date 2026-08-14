@@ -317,6 +317,53 @@ class _StatusViewScreenState extends State<StatusViewScreen> with SingleTickerPr
           child: Text('🔒 Error al decodificar imagen', style: TextStyle(color: Colors.white54)),
         );
       }
+    } else if (story.type == 'audio') {
+      return Container(
+        color: const Color(0xFF0F0F0F),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E1E),
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFFF1744), width: 2),
+                boxShadow: [
+                  BoxShadow(color: const Color(0xFFFF1744).withOpacity(0.3), blurRadius: 24, spreadRadius: 4),
+                ],
+              ),
+              child: const Icon(Icons.graphic_eq_rounded, color: Color(0xFFFF1744), size: 64),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Nota de voz de ${widget.statusGroup.userName}',
+              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '🔒 Audio cifrado de extremo a extremo',
+              style: TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    } else if (story.type == 'video') {
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.play_circle_filled_rounded, color: Color(0xFFFF1744), size: 80),
+            SizedBox(height: 16),
+            Text('Video Cifrado E2EE', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            SizedBox(height: 6),
+            Text('Reproduciendo historia...', style: TextStyle(color: Colors.white60, fontSize: 13)),
+          ],
+        ),
+      );
     } else {
       return Container(
         color: const Color(0xFF121212),

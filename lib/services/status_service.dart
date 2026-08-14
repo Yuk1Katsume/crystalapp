@@ -20,7 +20,7 @@ class StatusService {
   static const String _statusSecretSalt = 'crystal_status_e2ee_salt_v1';
 
   /// Computes mutual allowed viewer IDs:
-  /// 1. Bilateral active conversations (users with direct message history).
+  /// 1. Bilateral active conversations (users with direct message history in SQLite or Supabase).
   /// 2. Registered contacts from device address book.
   Future<List<String>> getMutualAllowedViewerIds() async {
     final currentUid = _auth.currentUser?.uid;
@@ -28,13 +28,37 @@ class StatusService {
 
     final allowedIds = <String>{};
 
-    // 1. Bilateral active chat conversations
+    // 1. Bilateral active chat conversations from SQLite
     try {
       final activeChatUserIds = await _localDb.getActiveConversationUserIds(currentUid);
       allowedIds.addAll(activeChatUserIds);
     } catch (_) {}
 
-    // 2. Mutual phone contacts
+    // 2. Direct message conversations from Supabase
+    try {
+      final sent = await SupabaseConfig.client
+          .from('messages')
+          .select('recipient_id')
+          .eq('sender_id', currentUid)
+          .limit(100);
+      for (final row in sent) {
+        if (row['recipient_id'] != null && row['recipient_id'].toString().isNotEmpty) {
+          allowedIds.add(row['recipient_id'].toString());
+        }
+      }
+      final received = await SupabaseConfig.client
+          .from('messages')
+          .select('sender_id')
+          .eq('recipient_id', currentUid)
+          .limit(100);
+      for (final row in received) {
+        if (row['sender_id'] != null && row['sender_id'].toString().isNotEmpty) {
+          allowedIds.add(row['sender_id'].toString());
+        }
+      }
+    } catch (_) {}
+
+    // 3. Mutual phone contacts
     try {
       final res = await _contactsService.syncContacts();
       final registered = res['registered'] ?? [];
@@ -137,6 +161,9 @@ class StatusService {
     final currentUid = _auth.currentUser?.uid ?? '';
     if (currentUid.isEmpty) return Stream.value([]);
 
+    // Trigger background cleanup of expired statuses
+    pruneExpiredStatuses();
+
     return _firestore
         .collection('statuses')
         .snapshots()
@@ -149,14 +176,14 @@ class StatusService {
           final data = doc.data();
           final status = StatusItem.fromJson(data);
 
-          // Only keep if not expired
+          // Only keep if not expired (strict 24h cycle)
           if (status.expiresAt.isBefore(now)) continue;
 
           // Exclude own statuses (handled separately)
           if (status.userId == currentUid) continue;
 
-          // Check if current user is in allowed viewers list
-          if (status.allowedViewerIds.contains(currentUid)) {
+          // Check if current user is in allowed viewers list or public mutual
+          if (status.allowedViewerIds.isEmpty || status.allowedViewerIds.contains(currentUid)) {
             // Decrypt content
             final decryptedContent = E2EEService.decryptPayload(status.content, _statusSecretSalt);
             final decryptedCaption = status.caption != null
@@ -268,6 +295,27 @@ class StatusService {
       await _firestore.collection('statuses').doc(statusId).update({
         'viewed_by_user_ids': FieldValue.arrayUnion([currentUid]),
       }).timeout(const Duration(seconds: 3));
+    } catch (_) {}
+  }
+
+  /// Prune and remove expired statuses (> 24 hours old) from both Firestore and Supabase
+  Future<void> pruneExpiredStatuses() async {
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+    try {
+      final oldDocs = await _firestore
+          .collection('statuses')
+          .where('created_at', isLessThan: cutoff.toIso8601String())
+          .get();
+      for (final doc in oldDocs.docs) {
+        await doc.reference.delete();
+      }
+    } catch (_) {}
+
+    try {
+      await SupabaseConfig.client
+          .from('statuses')
+          .delete()
+          .lt('created_at', cutoff.toIso8601String());
     } catch (_) {}
   }
 
