@@ -23,9 +23,11 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  late TabController _tabController;
-  late AnimationController _fabAnimationController;
-  late Animation<double> _expandAnimation;
+  int _selectedBottomNavIndex = 0;
+  String _selectedFilter = 'Todos'; // 'Todos', 'No leídos', 'Favoritos', 'Grupos'
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
   final GroupChatService _groupService = GroupChatService();
   final AuthService _authService = AuthService();
   final ChatService _chatService = ChatService();
@@ -33,22 +35,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final ContactsServiceManager _contactsService = ContactsServiceManager();
   final currentUser = FirebaseAuth.instance.currentUser;
 
-  bool _isFabMenuOpen = false;
   Map<String, String> _phoneContactNames = {};
   StreamSubscription? _incomingMsgSub;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _fabAnimationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _expandAnimation = CurvedAnimation(
-      parent: _fabAnimationController,
-      curve: Curves.fastOutSlowIn,
-    );
     _ensureProfileSaved();
     _loadPhoneContacts();
     _chatService.startGlobalIncomingListener();
@@ -100,89 +92,226 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _incomingMsgSub?.cancel();
-    _tabController.dispose();
-    _fabAnimationController.dispose();
+    _searchController.dispose();
     super.dispose();
-  }
-
-  void _toggleFabMenu() {
-    setState(() {
-      _isFabMenuOpen = !_isFabMenuOpen;
-      if (_isFabMenuOpen) {
-        _fabAnimationController.forward();
-      } else {
-        _fabAnimationController.reverse();
-      }
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF121212),
-        elevation: 0,
-        title: const Text(
-          'CrystalApp 🌸',
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 20),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search_rounded, color: Colors.white),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_rounded, color: Colors.white70),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-            },
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: const Color(0xFFFF1744),
-          indicatorWeight: 3,
-          labelColor: const Color(0xFFFF1744),
-          unselectedLabelColor: Colors.white60,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-          tabs: const [
-            Tab(text: 'CHATS DIRECTOS'),
-            Tab(text: 'GRUPOS'),
+      backgroundColor: const Color(0xFF0B141B),
+      body: SafeArea(
+        child: IndexedStack(
+          index: _selectedBottomNavIndex,
+          children: [
+            _buildChatsTab(),
+            _buildStatusTab(),
+            _buildCallsTab(),
+            _buildAiChatTab(),
           ],
         ),
       ),
-      body: Stack(
-        children: [
-          TabBarView(
-            controller: _tabController,
-            children: [
-              _buildDirectChatsList(),
-              _buildGroupsList(),
-            ],
-          ),
-          if (_isFabMenuOpen)
-            GestureDetector(
-              onTap: _toggleFabMenu,
-              behavior: HitTestBehavior.opaque,
-              child: Container(color: Colors.black.withOpacity(0.5)),
-            ),
-        ],
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: _buildAnimatedExpandableFab(),
+      floatingActionButton: _buildFloatingActionButton(),
+      bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
 
-  Widget _buildDirectChatsList() {
+  // ==========================================
+  // TAB 0: CHATS TAB (Unified Direct + Groups)
+  // ==========================================
+  Widget _buildChatsTab() {
+    return Column(
+      children: [
+        _buildTopHeader(),
+        _buildSearchBar(),
+        _buildFilterPills(),
+        Expanded(child: _buildUnifiedConversationsList()),
+      ],
+    );
+  }
+
+  Widget _buildTopHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          const Text(
+            'CrystalApp 🌸',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.camera_alt_outlined, color: Colors.white),
+            tooltip: 'Cámara',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Abre la cámara desde cualquier conversación para enviar fotos o notas.'),
+                  backgroundColor: Color(0xFF1E1E1E),
+                ),
+              );
+            },
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+            color: const Color(0xFF1E262C),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            onSelected: (val) {
+              if (val == 'new_group') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+                );
+              } else if (val == 'search') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+                );
+              } else if (val == 'settings') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'new_group',
+                child: Text('Nuevo grupo', style: TextStyle(color: Colors.white)),
+              ),
+              const PopupMenuItem(
+                value: 'search',
+                child: Text('Buscar amigos', style: TextStyle(color: Colors.white)),
+              ),
+              const PopupMenuItem(
+                value: 'settings',
+                child: Text('Ajustes', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Container(
+        height: 44,
+        decoration: BoxDecoration(
+          color: const Color(0xFF1F2C34),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(width: 14),
+            const Icon(Icons.search_rounded, color: Colors.white54, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                decoration: const InputDecoration(
+                  hintText: 'Preguntar a Crystal AI o buscar',
+                  hintStyle: TextStyle(color: Colors.white38, fontSize: 14),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                onChanged: (val) {
+                  setState(() {
+                    _searchQuery = val.trim().toLowerCase();
+                  });
+                },
+              ),
+            ),
+            if (_searchQuery.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {
+                    _searchQuery = '';
+                  });
+                },
+              )
+            else
+              const Padding(
+                padding: EdgeInsets.only(right: 14),
+                child: Icon(Icons.auto_awesome_rounded, color: Color(0xFFFF1744), size: 18),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterPills() {
+    final filters = ['Todos', 'No leídos', 'Favoritos', 'Grupos'];
+
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        itemCount: filters.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          if (index == filters.length) {
+            // '+' pill
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1F2C34),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(Icons.add, color: Colors.white54, size: 18),
+            );
+          }
+
+          final filter = filters[index];
+          final isSelected = _selectedFilter == filter;
+
+          return GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedFilter = filter;
+              });
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF0F392B) : const Color(0xFF1F2C34),
+                borderRadius: BorderRadius.circular(20),
+                border: isSelected
+                    ? Border.all(color: const Color(0xFF00A884).withOpacity(0.5), width: 1)
+                    : null,
+              ),
+              child: Center(
+                child: Text(
+                  filter,
+                  style: TextStyle(
+                    color: isSelected ? const Color(0xFF25D366) : Colors.white60,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildUnifiedConversationsList() {
     final myUid = currentUser?.uid ?? '';
     if (myUid.isEmpty) {
       return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
@@ -193,172 +322,72 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       builder: (context, activeIdsSnap) {
         final activeUserIds = activeIdsSnap.data ?? [];
 
-        if (activeIdsSnap.connectionState == ConnectionState.waiting && !activeIdsSnap.hasData) {
-          return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
-        }
+        return StreamBuilder<List<GroupModel>>(
+          stream: _groupService.myGroups,
+          builder: (context, groupsSnap) {
+            final groups = groupsSnap.data ?? [];
 
-        if (activeUserIds.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.mark_chat_unread_outlined, size: 64, color: Colors.white24),
-                const SizedBox(height: 16),
-                const Text(
-                  'No tienes conversaciones activas.',
-                  style: TextStyle(color: Colors.white54, fontSize: 15),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Busca un usuario para empezar a chatear',
-                  style: TextStyle(color: Colors.white30, fontSize: 13),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
-                  icon: const Icon(Icons.search, color: Colors.white),
-                  label: const Text('Buscar Usuarios / Amigos 🔍', style: TextStyle(color: Colors.white)),
-                  onPressed: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
-                    );
-                    if (mounted) setState(() {});
-                  },
-                ),
-              ],
-            ),
-          );
-        }
+            // If user only wants to see groups filter
+            if (_selectedFilter == 'Grupos') {
+              final filteredGroups = groups.where((g) {
+                if (_searchQuery.isEmpty) return true;
+                return g.name.toLowerCase().contains(_searchQuery);
+              }).toList();
 
-        return StreamBuilder<List<Map<String, dynamic>>>(
-          stream: SupabaseConfig.client
-              .from('users')
-              .stream(primaryKey: ['id'])
-              .map((data) => data.where((item) => activeUserIds.contains(item['id'])).toList()),
-          builder: (context, snapshot) {
-            final users = snapshot.data ?? [];
+              if (filteredGroups.isEmpty) {
+                return _buildEmptyState('No estás en ningún grupo todavía.', 'Crea un grupo con tus amigos.');
+              }
 
-            if (users.isEmpty && snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
-            }
-
-            if (users.isEmpty) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.mark_chat_unread_outlined, size: 64, color: Colors.white24),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'No tienes conversaciones activas.',
-                      style: TextStyle(color: Colors.white54, fontSize: 15),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Busca un usuario para empezar a chatear',
-                      style: TextStyle(color: Colors.white30, fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
-                      icon: const Icon(Icons.search, color: Colors.white),
-                      label: const Text('Buscar Usuarios / Amigos 🔍', style: TextStyle(color: Colors.white)),
-                      onPressed: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
-                        );
-                        if (mounted) setState(() {});
-                      },
-                    ),
-                  ],
-                ),
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: filteredGroups.length,
+                itemBuilder: (context, index) {
+                  return _buildGroupTile(filteredGroups[index]);
+                },
               );
             }
 
-            return ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: users.length,
-              itemBuilder: (context, index) {
-                final userData = users[index];
-                final userId = userData['id'];
-                final rawDisplayName = userData['display_name'] ?? userData['username'] ?? 'Usuario';
-                final contactName = _phoneContactNames[userId];
-                final displayName = contactName ?? rawDisplayName;
-                final isFromContacts = contactName != null;
-                final username = userData['username'] ?? '';
-                final isOnline = userData['is_online'] ?? false;
-                final avatarUrl = userData['avatar_url'];
+            // For 'Todos', 'No leídos', 'Favoritos'
+            return StreamBuilder<List<Map<String, dynamic>>>(
+              stream: SupabaseConfig.client
+                  .from('users')
+                  .stream(primaryKey: ['id'])
+                  .map((data) => data.where((item) => activeUserIds.contains(item['id'])).toList()),
+              builder: (context, usersSnap) {
+                final directUsers = usersSnap.data ?? [];
 
-                return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  leading: Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: const Color(0xFF1E1E1E),
-                        backgroundImage: (avatarUrl != null && avatarUrl.toString().startsWith('http'))
-                            ? NetworkImage(avatarUrl)
-                            : null,
-                        child: (avatarUrl == null || !avatarUrl.toString().startsWith('http'))
-                            ? Text(
-                                displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                              )
-                            : null,
-                      ),
-                      if (isOnline)
-                        Positioned(
-                          right: 0,
-                          bottom: 0,
-                          child: Container(
-                            width: 14,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              color: Colors.greenAccent,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: const Color(0xFF0A0A0A), width: 2),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  title: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          displayName,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (isFromContacts) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF1744).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text('Agenda 📱', style: TextStyle(color: Color(0xFFFF1744), fontSize: 9, fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ],
-                  ),
-                  subtitle: _LastMessagePreview(
-                    userId: userId,
-                    currentUserId: currentUser?.uid ?? '',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white24, size: 16),
-                  onTap: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ChatScreen(recipientId: userId, recipientName: displayName),
-                      ),
-                    );
-                    if (mounted) setState(() {});
+                // Filter direct users by search
+                final filteredUsers = directUsers.where((u) {
+                  if (_searchQuery.isEmpty) return true;
+                  final name = (_phoneContactNames[u['id']] ?? u['display_name'] ?? u['username'] ?? '').toString().toLowerCase();
+                  return name.contains(_searchQuery);
+                }).toList();
+
+                // Filter groups by search
+                final filteredGroups = groups.where((g) {
+                  if (_searchQuery.isEmpty) return true;
+                  return g.name.toLowerCase().contains(_searchQuery);
+                }).toList();
+
+                final totalCount = filteredUsers.length + filteredGroups.length;
+
+                if (totalCount == 0) {
+                  return _buildEmptyState(
+                    'No tienes conversaciones activas.',
+                    'Busca un usuario o crea un grupo para empezar a chatear.',
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: totalCount,
+                  itemBuilder: (context, index) {
+                    if (index < filteredUsers.length) {
+                      return _buildDirectUserTile(filteredUsers[index]);
+                    } else {
+                      final groupIndex = index - filteredUsers.length;
+                      return _buildGroupTile(filteredGroups[groupIndex]);
+                    }
                   },
                 );
               },
@@ -369,264 +398,629 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildGroupsList() {
-    return StreamBuilder<List<GroupModel>>(
-      stream: _groupService.myGroups,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: Color(0xFFFF1744)));
-        }
+  Widget _buildDirectUserTile(Map<String, dynamic> userData) {
+    final userId = userData['id'];
+    final rawDisplayName = userData['display_name'] ?? userData['username'] ?? 'Usuario';
+    final contactName = _phoneContactNames[userId];
+    final displayName = contactName ?? rawDisplayName;
+    final isFromContacts = contactName != null;
+    final isOnline = userData['is_online'] ?? false;
+    final avatarUrl = userData['avatar_url'];
 
-        final groups = snapshot.data ?? [];
-        if (groups.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.groups_outlined, size: 64, color: Colors.white24),
-                const SizedBox(height: 16),
-                const Text(
-                  'No estás en ningún grupo todavía.',
-                  style: TextStyle(color: Colors.white54, fontSize: 15),
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Stack(
+        children: [
+          CircleAvatar(
+            radius: 26,
+            backgroundColor: const Color(0xFF1E262C),
+            backgroundImage: (avatarUrl != null && avatarUrl.toString().startsWith('http'))
+                ? NetworkImage(avatarUrl)
+                : null,
+            child: (avatarUrl == null || !avatarUrl.toString().startsWith('http'))
+                ? Text(
+                    displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                  )
+                : null,
+          ),
+          if (isOnline)
+            Positioned(
+              right: 1,
+              bottom: 1,
+              child: Container(
+                width: 13,
+                height: 13,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF0B141B), width: 2),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Toca el botón + y selecciona "Crear Grupo"',
-                  style: TextStyle(color: Colors.white30, fontSize: 13),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: groups.length,
-          itemBuilder: (context, index) {
-            final group = groups[index];
-            final hasIcon = group.iconUrl != null && group.iconUrl!.isNotEmpty;
-
-            return ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              leading: CircleAvatar(
-                radius: 24,
-                backgroundColor: const Color(0xFF222222),
-                backgroundImage: hasIcon ? NetworkImage(group.iconUrl!) : null,
-                child: !hasIcon
-                    ? const Icon(Icons.group_rounded, color: Colors.white70, size: 24)
-                    : null,
               ),
-              title: Text(group.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-              subtitle: Text('${group.memberIds.length} miembros • 🔒 Grupo E2EE', style: const TextStyle(color: Colors.white38, fontSize: 13)),
-              trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white24, size: 16),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(groupId: group.id, groupName: group.name),
-                  ),
-                );
-              },
-            );
-          },
+            ),
+        ],
+      ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              displayName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 16,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (isFromContacts) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF1744).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text('Agenda 📱', style: TextStyle(color: Color(0xFFFF1744), fontSize: 9, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ],
+      ),
+      subtitle: _LastMessagePreview(
+        userId: userId,
+        currentUserId: currentUser?.uid ?? '',
+      ),
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(recipientId: userId, recipientName: displayName),
+          ),
+        );
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  Widget _buildGroupTile(GroupModel group) {
+    final hasIcon = group.iconUrl != null && group.iconUrl!.isNotEmpty;
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: CircleAvatar(
+        radius: 26,
+        backgroundColor: const Color(0xFF1E262C),
+        backgroundImage: hasIcon ? NetworkImage(group.iconUrl!) : null,
+        child: !hasIcon
+            ? const Icon(Icons.groups_rounded, color: Colors.white70, size: 26)
+            : null,
+      ),
+      title: Text(
+        group.name,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+          fontSize: 16,
+        ),
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        '${group.memberIds.length} miembros • 🔒 Grupo E2EE',
+        style: const TextStyle(color: Colors.white38, fontSize: 13),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(groupId: group.id, groupName: group.name),
+          ),
         );
       },
     );
   }
 
-  Widget _buildAnimatedExpandableFab() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        ScaleTransition(
-          alignment: Alignment.bottomRight,
-          scale: _expandAnimation,
-          child: FadeTransition(
-            opacity: _expandAnimation,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                _buildFabMenuItem(
-                  label: 'Buscar Usuarios',
-                  icon: Icons.person_search_rounded,
-                  color: const Color(0xFFFF1744),
-                  onTap: () {
-                    _toggleFabMenu();
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                _buildFabMenuItem(
-                  label: 'Crear Grupo',
-                  icon: Icons.group_add_rounded,
-                  color: Colors.deepPurpleAccent,
-                  onTap: () {
-                    _toggleFabMenu();
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-              ],
+  Widget _buildEmptyState(String title, String subtitle) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.chat_bubble_outline_rounded, size: 64, color: Colors.white24),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            style: const TextStyle(color: Colors.white54, fontSize: 15),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: const TextStyle(color: Colors.white30, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00A884),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             ),
+            icon: const Icon(Icons.search, size: 18),
+            label: const Text('Buscar contactos 🔍'),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+              );
+              if (mounted) setState(() {});
+            },
           ),
-        ),
-        FloatingActionButton(
-          backgroundColor: const Color(0xFFFF1744),
-          elevation: 6,
-          onPressed: _toggleFabMenu,
-          child: AnimatedRotation(
-            turns: _isFabMenuOpen ? 1.125 : 0.0,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOutBack,
-            child: const Icon(Icons.add, size: 28, color: Colors.white),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  Widget _buildFabMenuItem({
-    required String label,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.end,
+  // ==========================================
+  // TAB 1: ESTADOS (Status / Stories)
+  // ==========================================
+  Widget _buildStatusTab() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.4),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Estados',
+              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            IconButton(
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              onPressed: () {},
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Stack(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundColor: const Color(0xFF1E262C),
+                child: Text(
+                  currentUser?.displayName?.isNotEmpty == true
+                      ? currentUser!.displayName![0].toUpperCase()
+                      : '🌸',
+                  style: const TextStyle(color: Colors.white, fontSize: 20),
+                ),
+              ),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF00A884),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.add, color: Colors.white, size: 14),
+                ),
               ),
             ],
           ),
-          child: Text(
-            label,
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+          title: const Text(
+            'Mi estado',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
           ),
+          subtitle: const Text(
+            'Añade una actualización',
+            style: TextStyle(color: Colors.white38, fontSize: 13),
+          ),
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Los estados multimedia estarán disponibles muy pronto 🌸'),
+                backgroundColor: Color(0xFF1E1E1E),
+              ),
+            );
+          },
         ),
-        const SizedBox(width: 12),
-        Padding(
-          padding: const EdgeInsets.only(right: 4),
-          child: FloatingActionButton.small(
-            heroTag: label,
-            backgroundColor: color,
-            elevation: 4,
-            onPressed: onTap,
-            child: Icon(icon, color: Colors.white, size: 20),
+        const Divider(color: Colors.white12, height: 32),
+        const Text(
+          'ACTUALIZACIONES RECIENTES',
+          style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+        ),
+        const SizedBox(height: 24),
+        Center(
+          child: Column(
+            children: [
+              Icon(Icons.donut_large_rounded, size: 48, color: Colors.white.withOpacity(0.2)),
+              const SizedBox(height: 12),
+              const Text(
+                'No hay actualizaciones de estado recientes',
+                style: TextStyle(color: Colors.white38, fontSize: 14),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.lock_rounded, size: 14, color: Colors.white30),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Tus estados están protegidos con cifrado E2EE',
+                    style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  void _showCreateGroupDialog() async {
-    final groupNameController = TextEditingController();
-    final usersSnapshot = await FirebaseFirestore.instance.collection('users').get();
-    final availableUsers = usersSnapshot.docs.where((doc) => doc.id != currentUser?.uid).toList();
-    final selectedUserIds = <String>[];
+  // ==========================================
+  // TAB 2: REGISTRO DE LLAMADAS
+  // ==========================================
+  Widget _buildCallsTab() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Llamadas',
+              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            IconButton(
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              onPressed: () {},
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const CircleAvatar(
+            radius: 24,
+            backgroundColor: Color(0xFF00A884),
+            child: Icon(Icons.link_rounded, color: Colors.black, size: 24),
+          ),
+          title: const Text(
+            'Crear enlace de llamada',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          subtitle: const Text(
+            'Comparte un enlace para tu llamada cifrada',
+            style: TextStyle(color: Colors.white38, fontSize: 13),
+          ),
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Llamadas cifradas de voz y video en camino 📞'),
+                backgroundColor: Color(0xFF1E1E1E),
+              ),
+            );
+          },
+        ),
+        const Divider(color: Colors.white12, height: 32),
+        const Text(
+          'RECIENTES',
+          style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+        ),
+        const SizedBox(height: 32),
+        Center(
+          child: Column(
+            children: [
+              Icon(Icons.call_end_outlined, size: 48, color: Colors.white.withOpacity(0.2)),
+              const SizedBox(height: 12),
+              const Text(
+                'No hay llamadas recientes',
+                style: TextStyle(color: Colors.white38, fontSize: 14),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.lock_rounded, size: 14, color: Colors.white30),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Tus llamadas personales están cifradas de extremo a extremo',
+                    style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF1E1E1E),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Text('Crear Nuevo Grupo 👥', style: TextStyle(color: Colors.white)),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: groupNameController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        labelText: 'Nombre del Grupo',
-                        labelStyle: TextStyle(color: Colors.white60),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFF1744))),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Selecciona Miembros:', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: availableUsers.length,
-                        itemBuilder: (context, index) {
-                          final u = availableUsers[index];
-                          final uData = u.data();
-                          final name = uData['displayName'] ?? uData['username'] ?? uData['phone'] ?? 'Usuario';
-                          final username = uData['username'] ?? '';
-                          final isSelected = selectedUserIds.contains(u.id);
-
-                          return CheckboxListTile(
-                            activeColor: const Color(0xFFFF1744),
-                            title: Text(name, style: const TextStyle(color: Colors.white)),
-                            subtitle: Text('@$username', style: const TextStyle(color: Colors.white38, fontSize: 12)),
-                            value: isSelected,
-                            onChanged: (val) {
-                              setStateDialog(() {
-                                if (val == true) {
-                                  selectedUserIds.add(u.id);
-                                } else {
-                                  selectedUserIds.remove(u.id);
-                                }
-                              });
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+  // ==========================================
+  // TAB 3: CHAT DE IA (Crystal AI - Próximamente)
+  // ==========================================
+  Widget _buildAiChatTab() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Crystal AI 🌸',
+                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFF1744), Color(0xFF7C4DFF)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'BETA',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
                 ),
               ),
-              actions: [
-                TextButton(
-                  child: const Text('Cancelar', style: TextStyle(color: Colors.white60)),
-                  onPressed: () => Navigator.pop(context),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1F2C34),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFFF1744).withOpacity(0.3), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFFF1744).withOpacity(0.1),
+                  blurRadius: 24,
+                  spreadRadius: 2,
                 ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
-                  child: const Text('Crear Grupo', style: TextStyle(color: Colors.white)),
-                  onPressed: () async {
-                    final name = groupNameController.text.trim();
-                    if (name.isNotEmpty && selectedUserIds.isNotEmpty) {
-                      await _groupService.createGroup(name: name, memberIds: selectedUserIds);
-                      if (mounted) Navigator.pop(context);
-                    }
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [Color(0xFFFF1744), Color(0xFF9C27B0), Color(0xFF29B6F6)],
+                    ),
+                  ),
+                  child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 36),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Chat de IA Inteligente',
+                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Tu asistente personal con cifrado total, generación de resúmenes, traducción en tiempo real y respuestas instantáneas.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.4),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101D25),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.hourglass_top_rounded, color: Color(0xFFFF1744), size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'En desarrollo para la próxima versión',
+                        style: TextStyle(color: Color(0xFFFF8DA1), fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          Container(
+            height: 50,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1F2C34),
+              borderRadius: BorderRadius.circular(25),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome_rounded, color: Color(0xFFFF1744), size: 20),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Pregúntale algo a Crystal AI...',
+                    style: TextStyle(color: Colors.white38, fontSize: 14),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send_rounded, color: Colors.white30, size: 20),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('El motor de IA estará activo en la siguiente actualización 🤖🌸'),
+                        backgroundColor: Color(0xFF1E1E1E),
+                      ),
+                    );
                   },
                 ),
               ],
-            );
-          },
-        );
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // FLOATING ACTION BUTTON
+  // ==========================================
+  Widget? _buildFloatingActionButton() {
+    if (_selectedBottomNavIndex == 0) {
+      // Chats tab FAB
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Meta AI-style floating badge
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF1E262C),
+              border: Border.all(color: Colors.white12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 8,
+                ),
+              ],
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFFF1744), size: 20),
+              tooltip: 'Crystal AI',
+              onPressed: () {
+                setState(() {
+                  _selectedBottomNavIndex = 3;
+                });
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            backgroundColor: const Color(0xFF00A884),
+            elevation: 4,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+              );
+            },
+            child: const Icon(Icons.chat_bubble_rounded, color: Colors.black, size: 24),
+          ),
+        ],
+      );
+    } else if (_selectedBottomNavIndex == 1) {
+      // Status tab FAB
+      return FloatingActionButton(
+        backgroundColor: const Color(0xFF00A884),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        onPressed: () {},
+        child: const Icon(Icons.camera_alt_rounded, color: Colors.black, size: 24),
+      );
+    } else if (_selectedBottomNavIndex == 2) {
+      // Calls tab FAB
+      return FloatingActionButton(
+        backgroundColor: const Color(0xFF00A884),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        onPressed: () {},
+        child: const Icon(Icons.add_ic_call_rounded, color: Colors.black, size: 24),
+      );
+    }
+    return null;
+  }
+
+  // ==========================================
+  // BOTTOM NAVIGATION BAR (WhatsApp Style)
+  // ==========================================
+  Widget _buildBottomNavigationBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0B141B),
+        border: Border(top: BorderSide(color: Color(0xFF1F2C34), width: 0.8)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildNavItem(0, Icons.chat_rounded, 'Chats'),
+          _buildNavItem(1, Icons.donut_large_rounded, 'Estados', hasNotification: true),
+          _buildNavItem(2, Icons.call_rounded, 'Llamadas'),
+          _buildNavItem(3, Icons.auto_awesome_rounded, 'Chat IA', isAi: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavItem(int index, IconData icon, String label, {bool hasNotification = false, bool isAi = false}) {
+    final isSelected = _selectedBottomNavIndex == index;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedBottomNavIndex = index;
+        });
       },
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (isAi ? const Color(0x33FF1744) : const Color(0xFF0F392B))
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  icon,
+                  size: 24,
+                  color: isSelected
+                      ? (isAi ? const Color(0xFFFF1744) : const Color(0xFF25D366))
+                      : Colors.white54,
+                ),
+              ),
+              if (hasNotification && !isSelected)
+                Positioned(
+                  top: 2,
+                  right: 14,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF25D366),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected
+                  ? Colors.white
+                  : Colors.white54,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -671,33 +1065,38 @@ class _LastMessagePreviewState extends State<_LastMessagePreview> {
         String preview;
         if (messageType == 'image') {
           preview = isSentByMe ? '📷 Foto enviada' : '📷 Foto recibida';
+        } else if (messageType == 'audio') {
+          preview = isSentByMe ? '🎤 Mensaje de voz' : '🎤 Mensaje de voz recibido';
         } else if (text.startsWith('IMGENC:') || text.startsWith('E2EE:')) {
           preview = '🔒 Mensaje cifrado';
         } else {
           preview = text.length > 45 ? '${text.substring(0, 45)}...' : text;
         }
 
-        if (isRead) {
-          // Leído → Gris normal
-          return Text(
-            preview,
-            style: const TextStyle(color: Colors.white38, fontSize: 13),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          );
-        } else {
-          // No leído → Blanco y negrita
-          return Text(
-            preview,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
+        return Row(
+          children: [
+            if (isSentByMe) ...[
+              Icon(
+                isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                size: 15,
+                color: isRead ? const Color(0xFF53BDEB) : Colors.white38,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Expanded(
+              child: Text(
+                preview,
+                style: TextStyle(
+                  color: isRead ? Colors.white38 : Colors.white,
+                  fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
+                  fontSize: 13,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          );
-        }
+          ],
+        );
       },
     );
   }
