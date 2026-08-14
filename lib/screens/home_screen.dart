@@ -370,64 +370,61 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildAnimatedExpandableFab() {
-    return Container(
-      alignment: Alignment.bottomRight,
-      margin: const EdgeInsets.only(right: 8, bottom: 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          SizeTransition(
-            sizeFactor: _expandAnimation,
-            child: ScaleTransition(
-              scale: _expandAnimation,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _buildFabMenuItem(
-                    label: 'Buscar Usuarios',
-                    icon: Icons.person_search_rounded,
-                    color: const Color(0xFFFF1744),
-                    onTap: () {
-                      _toggleFabMenu();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  _buildFabMenuItem(
-                    label: 'Crear Grupo',
-                    icon: Icons.group_add_rounded,
-                    color: Colors.deepPurpleAccent,
-                    onTap: () {
-                      _toggleFabMenu();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        ScaleTransition(
+          alignment: Alignment.bottomRight,
+          scale: _expandAnimation,
+          child: FadeTransition(
+            opacity: _expandAnimation,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _buildFabMenuItem(
+                  label: 'Buscar Usuarios',
+                  icon: Icons.person_search_rounded,
+                  color: const Color(0xFFFF1744),
+                  onTap: () {
+                    _toggleFabMenu();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SearchUsersScreen()),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                _buildFabMenuItem(
+                  label: 'Crear Grupo',
+                  icon: Icons.group_add_rounded,
+                  color: Colors.deepPurpleAccent,
+                  onTap: () {
+                    _toggleFabMenu();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
             ),
           ),
-          FloatingActionButton(
-            backgroundColor: const Color(0xFFFF1744),
-            elevation: 6,
-            onPressed: _toggleFabMenu,
-            child: AnimatedRotation(
-              turns: _isFabMenuOpen ? 1.125 : 0.0,
-              duration: const Duration(milliseconds: 350),
-              curve: Curves.easeInOutBack,
-              child: const Icon(Icons.add, size: 28, color: Colors.white),
-            ),
+        ),
+        FloatingActionButton(
+          backgroundColor: const Color(0xFFFF1744),
+          elevation: 6,
+          onPressed: _toggleFabMenu,
+          child: AnimatedRotation(
+            turns: _isFabMenuOpen ? 1.125 : 0.0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOutBack,
+            child: const Icon(Icons.add, size: 28, color: Colors.white),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -442,23 +439,34 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
             color: const Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(color: Colors.white12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Text(
             label,
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
           ),
         ),
-        const SizedBox(width: 10),
-        FloatingActionButton.small(
-          heroTag: label,
-          backgroundColor: color,
-          onPressed: onTap,
-          child: Icon(icon, color: Colors.white, size: 20),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: FloatingActionButton.small(
+            heroTag: label,
+            backgroundColor: color,
+            elevation: 4,
+            onPressed: onTap,
+            child: Icon(icon, color: Colors.white, size: 20),
+          ),
         ),
       ],
     );
