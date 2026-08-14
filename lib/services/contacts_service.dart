@@ -202,4 +202,30 @@ class ContactsServiceManager {
       };
     }
   }
+
+  /// Get contact name from agenda for a specific user ID or phone number
+  Future<String?> getContactNameForUser(String userId, [String? phone]) async {
+    if (_cachedRegisteredContacts.isEmpty) {
+      await syncContacts();
+    }
+    for (final c in _cachedRegisteredContacts) {
+      if (c.appUserId == userId) {
+        return c.contactName;
+      }
+    }
+    if (phone != null && phone.isNotEmpty) {
+      final phoneVars = getPhoneVariations(phone);
+      for (final c in _cachedRegisteredContacts) {
+        if (phoneVars.any((v) => getPhoneVariations(c.rawPhoneNumber).contains(v))) {
+          return c.contactName;
+        }
+      }
+      for (final c in _cachedUnregisteredContacts) {
+        if (phoneVars.any((v) => getPhoneVariations(c.rawPhoneNumber).contains(v))) {
+          return c.contactName;
+        }
+      }
+    }
+    return null;
+  }
 }

@@ -2,7 +2,7 @@ name: crystalapp
 description: "CrystalApp - WhatsApp-like chat app with Firebase"
 publish_to: 'none'
 
-version: 1.2.1+10004
+version: 1.2.2+10005
 
 environment:
   sdk: ^3.12.2

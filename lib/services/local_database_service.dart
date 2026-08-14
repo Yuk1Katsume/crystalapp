@@ -21,7 +21,7 @@ class LocalDatabaseService {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_messages (
@@ -34,6 +34,7 @@ class LocalDatabaseService {
             media_url TEXT,
             created_at TEXT,
             is_read INTEGER DEFAULT 1,
+            is_starred INTEGER DEFAULT 0,
             status TEXT DEFAULT 'sent'
           )
         ''');
@@ -47,6 +48,11 @@ class LocalDatabaseService {
         if (oldVersion < 3) {
           try {
             await db.execute("ALTER TABLE local_messages ADD COLUMN status TEXT DEFAULT 'sent'");
+          } catch (_) {}
+        }
+        if (oldVersion < 4) {
+          try {
+            await db.execute('ALTER TABLE local_messages ADD COLUMN is_starred INTEGER DEFAULT 0');
           } catch (_) {}
         }
       },
@@ -64,6 +70,7 @@ class LocalDatabaseService {
     String? mediaUrl,
     required DateTime createdAt,
     bool isRead = true,
+    bool isStarred = false,
     String status = 'sent',
   }) async {
     final database = await db;
@@ -79,6 +86,7 @@ class LocalDatabaseService {
         'media_url': mediaUrl,
         'created_at': createdAt.toIso8601String(),
         'is_read': isRead ? 1 : 0,
+        'is_starred': isStarred ? 1 : 0,
         'status': status,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -91,6 +99,17 @@ class LocalDatabaseService {
     await database.update(
       'local_messages',
       {'status': status},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Toggle starred status for a message
+  Future<void> toggleStarredMessage(String id, bool isStarred) async {
+    final database = await db;
+    await database.update(
+      'local_messages',
+      {'is_starred': isStarred ? 1 : 0},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -117,35 +136,64 @@ class LocalDatabaseService {
       orderBy: 'created_at ASC',
     );
 
-    return maps.map((item) {
-      final msgType = item['message_type'] as String?;
-      ChatMessageType type = ChatMessageType.text;
-      if (msgType == 'sticker') {
-        type = ChatMessageType.sticker;
-      } else if (msgType == 'image') {
-        type = ChatMessageType.image;
-      } else if (msgType == 'audio') {
-        type = ChatMessageType.audio;
-      }
+    return maps.map((item) => _mapToMessage(item)).toList();
+  }
 
-      final statusStr = item['status'] as String? ?? 'sent';
-      final status = MessageStatus.values.firstWhere(
-        (e) => e.name == statusStr,
-        orElse: () => MessageStatus.sent,
-      );
+  /// Retrieve all starred messages for a conversation
+  Future<List<Message>> getStarredMessages(String groupId) async {
+    final database = await db;
+    final maps = await database.query(
+      'local_messages',
+      where: 'group_id = ? AND is_starred = 1',
+      whereArgs: [groupId],
+      orderBy: 'created_at DESC',
+    );
 
-      return Message(
-        id: item['id'] as String,
-        senderId: item['sender_id'] as String,
-        recipientId: item['recipient_id'] as String?,
-        text: item['text'] as String,
-        timestamp: DateTime.parse(item['created_at'] as String),
-        type: type,
-        mediaUrl: item['media_url'] as String?,
-        isRead: (item['is_read'] as int? ?? 1) == 1,
-        status: status,
-      );
-    }).toList();
+    return maps.map((item) => _mapToMessage(item)).toList();
+  }
+
+  /// Retrieve all media (images, voice, stickers) for a conversation
+  Future<List<Message>> getMediaMessages(String groupId) async {
+    final database = await db;
+    final maps = await database.query(
+      'local_messages',
+      where: "group_id = ? AND (message_type = 'image' OR message_type = 'audio' OR message_type = 'sticker')",
+      whereArgs: [groupId],
+      orderBy: 'created_at DESC',
+    );
+
+    return maps.map((item) => _mapToMessage(item)).toList();
+  }
+
+  Message _mapToMessage(Map<String, dynamic> item) {
+    final msgType = item['message_type'] as String?;
+    ChatMessageType type = ChatMessageType.text;
+    if (msgType == 'sticker') {
+      type = ChatMessageType.sticker;
+    } else if (msgType == 'image') {
+      type = ChatMessageType.image;
+    } else if (msgType == 'audio') {
+      type = ChatMessageType.audio;
+    }
+
+    final statusStr = item['status'] as String? ?? 'sent';
+    final status = MessageStatus.values.firstWhere(
+      (e) => e.name == statusStr,
+      orElse: () => MessageStatus.sent,
+    );
+
+    return Message(
+      id: item['id'] as String,
+      senderId: item['sender_id'] as String,
+      recipientId: item['recipient_id'] as String?,
+      text: item['text'] as String,
+      timestamp: DateTime.parse(item['created_at'] as String),
+      type: type,
+      mediaUrl: item['media_url'] as String?,
+      isRead: (item['is_read'] as int? ?? 1) == 1,
+      isStarred: (item['is_starred'] as int? ?? 0) == 1,
+      status: status,
+    );
   }
 
   /// Delete local message by id

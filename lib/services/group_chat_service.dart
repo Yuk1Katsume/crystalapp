@@ -77,6 +77,27 @@ class GroupChatService {
             snapshot.docs.map((doc) => GroupModel.fromJson(doc.data())).toList());
   }
 
+  /// Find all groups in common between the current user and another user
+  Future<List<GroupModel>> getGroupsInCommon(String otherUserId) async {
+    final user = _auth.currentUser;
+    if (user == null) return [];
+
+    try {
+      final snapshot = await _firestore
+          .collection('groups')
+          .where('memberIds', arrayContains: user.uid)
+          .get()
+          .timeout(const Duration(seconds: 4));
+
+      return snapshot.docs
+          .map((doc) => GroupModel.fromJson(doc.data()))
+          .where((group) => group.memberIds.contains(otherUserId))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Stream of group messages (E2EE decrypted)
   Stream<List<Message>> getGroupMessages(String groupId) {
     return _firestore

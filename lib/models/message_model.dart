@@ -28,6 +28,7 @@ class Message {
   final String? mediaUrl;
   final int? audioDurationSeconds;
   final bool isRead;
+  final bool isStarred;
   final MessageStatus status;
 
   Message({
@@ -43,6 +44,7 @@ class Message {
     this.mediaUrl,
     this.audioDurationSeconds,
     this.isRead = false,
+    this.isStarred = false,
     this.status = MessageStatus.sent,
   });
 
@@ -60,6 +62,7 @@ class Message {
       'mediaUrl': mediaUrl,
       'audioDurationSeconds': audioDurationSeconds,
       'isRead': isRead,
+      'isStarred': isStarred,
       'status': status.name,
     };
   }
@@ -83,6 +86,7 @@ class Message {
       mediaUrl: json['mediaUrl'] as String?,
       audioDurationSeconds: json['audioDurationSeconds'] as int?,
       isRead: json['isRead'] as bool? ?? false,
+      isStarred: json['isStarred'] as bool? ?? false,
       status: MessageStatus.values.firstWhere(
         (e) => e.name == json['status'],
         orElse: () => MessageStatus.sent,

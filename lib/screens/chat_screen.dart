@@ -8,8 +8,10 @@ import '../services/chat_service.dart';
 import '../services/group_chat_service.dart';
 import '../services/local_database_service.dart';
 import '../services/supabase_config.dart';
+import '../services/block_service.dart';
 import 'search_users_screen.dart';
 import 'image_viewer_screen.dart';
+import 'user_profile_screen.dart';
 import '../widgets/adaptive_image_bubble.dart';
 
 class Sticker {
@@ -123,6 +125,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   final FocusNode _focusNode = FocusNode();
   final ChatService _chatService = ChatService();
   final GroupChatService _groupService = GroupChatService();
+  final LocalDatabaseService _localDb = LocalDatabaseService();
   final currentUser = FirebaseAuth.instance.currentUser;
 
   bool get isGroup => widget.groupId != null;
@@ -329,6 +332,33 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _starSelectedMessages() async {
+    final anyNotStarred = _selectedMessages.any((m) => !m.isStarred);
+    final targetStarred = anyNotStarred;
+
+    for (var msg in _selectedMessages) {
+      await _localDb.toggleStarredMessage(msg.id, targetStarred);
+    }
+
+    setState(() {
+      _selectedMessages.clear();
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1E1E1E),
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            targetStarred ? 'Mensaje añadido a destacados ⭐️' : 'Mensaje eliminado de destacados',
+            style: const TextStyle(color: Colors.white),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
@@ -377,6 +407,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
                 ),
                 actions: [
+                  IconButton(
+                    icon: const Icon(Icons.star_rounded, color: Colors.amber),
+                    tooltip: 'Destacar',
+                    onPressed: _starSelectedMessages,
+                  ),
                   if (_selectedMessages.length == 1 && isSingleTextMessage) ...[
                     IconButton(
                       icon: const Icon(Icons.copy, color: Colors.white),
@@ -402,54 +437,74 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 backgroundColor: const Color(0xFF121212),
                 foregroundColor: Colors.white,
                 titleSpacing: 0,
-                title: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: const Color(0xFF1E1E1E),
-                      backgroundImage: (_recipientAvatarUrl != null && _recipientAvatarUrl!.startsWith('http'))
-                          ? NetworkImage(_recipientAvatarUrl!)
-                          : null,
-                      child: (_recipientAvatarUrl == null || !_recipientAvatarUrl!.startsWith('http'))
-                          ? Text(
-                              title.isNotEmpty ? title[0].toUpperCase() : '?',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                title: InkWell(
+                  onTap: () {
+                    if (!isGroup && widget.recipientId != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => UserProfileScreen(
+                            recipientId: widget.recipientId!,
+                            recipientName: title,
+                            initialAvatarUrl: _recipientAvatarUrl,
                           ),
-                          Row(
+                        ),
+                      );
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 18,
+                          backgroundColor: const Color(0xFF1E1E1E),
+                          backgroundImage: (_recipientAvatarUrl != null && _recipientAvatarUrl!.startsWith('http'))
+                              ? NetworkImage(_recipientAvatarUrl!)
+                              : null,
+                          child: (_recipientAvatarUrl == null || !_recipientAvatarUrl!.startsWith('http'))
+                              ? Text(
+                                  title.isNotEmpty ? title[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                width: 7,
-                                height: 7,
-                                margin: const EdgeInsets.only(right: 4),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: _recipientIsOnline ? Colors.greenAccent : Colors.grey,
-                                ),
-                              ),
                               Text(
-                                _recipientIsOnline ? 'Online · Cifrado E2EE' : 'Offline · Cifrado E2EE',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: _recipientIsOnline ? Colors.greenAccent : Colors.grey,
-                                ),
+                                title,
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 7,
+                                    height: 7,
+                                    margin: const EdgeInsets.only(right: 4),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: _recipientIsOnline ? Colors.greenAccent : Colors.grey,
+                                    ),
+                                  ),
+                                  Text(
+                                    _recipientIsOnline ? 'Online · Cifrado E2EE' : 'Offline · Cifrado E2EE',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: _recipientIsOnline ? Colors.greenAccent : Colors.grey,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
         body: Column(
@@ -774,6 +829,10 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (msg.isStarred) ...[
+                    const Icon(Icons.star_rounded, size: 12, color: Colors.amber),
+                    const SizedBox(width: 3),
+                  ],
                   Text(
                     '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
                     style: const TextStyle(color: Colors.white54, fontSize: 10),
@@ -845,6 +904,21 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+
+    if (!isGroup && widget.recipientId != null) {
+      final isBlocked = await BlockService().isUserBlocked(widget.recipientId!);
+      if (isBlocked) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF1E1E1E),
+              content: Text('Has bloqueado a este contacto. Desbloquéalo para enviarle mensajes.', style: TextStyle(color: Colors.white)),
+            ),
+          );
+        }
+        return;
+      }
+    }
 
     var formattedText = text;
     if (_replyingToMessage != null) {
