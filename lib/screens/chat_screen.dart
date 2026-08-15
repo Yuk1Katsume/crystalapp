@@ -926,16 +926,18 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   final ScrollController _scrollController = ScrollController();
 
   void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 150), () {
+    Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
         );
       }
     });
   }
+
+  int _lastMessageCount = 0;
 
   Widget _buildMessageList() {
     return StreamBuilder<List<Message>>(
@@ -956,12 +958,25 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           );
         }
 
-        // Jump to bottom instantly on first load (no animation)
+        // Jump to bottom instantly on first load
         if (!_initialScrollDone) {
           _initialScrollDone = true;
+          _lastMessageCount = messages.length;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (_scrollController.hasClients) {
               _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+            }
+          });
+        } else if (messages.length > _lastMessageCount) {
+          // Smooth elegant animation on new incoming or sent messages
+          _lastMessageCount = messages.length;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 350),
+                curve: Curves.easeOutCubic,
+              );
             }
           });
         }
@@ -1232,6 +1247,24 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             text,
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    } else if (action == 'admin_assigned') {
+      final isMeNowAdmin = (data['actor_id'] == currentUser?.uid);
+      final text = isMeNowAdmin ? 'Ahora eres el nuevo administrador del grupo' : '$who es ahora el nuevo administrador del grupo';
+      return buildDivider(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.75),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.3)),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFFB388FF), fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
       );
