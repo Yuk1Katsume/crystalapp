@@ -718,6 +718,85 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           );
         },
       ),
+      onLongPress: () {
+        final isMember = group.memberIds.contains(currentUser?.uid ?? '');
+        showModalBottomSheet(
+          context: context,
+          backgroundColor: const Color(0xFF161616),
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          builder: (ctx) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.cleaning_services_rounded, color: Colors.white70),
+                    title: const Text('Vaciar chat', style: TextStyle(color: Colors.white)),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _localDb.clearChatMessages(group.id);
+                      _refreshUnreadCount();
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline_rounded, color: Color(0xFFFF5252)),
+                    title: Text(
+                      isMember ? 'Salir y eliminar chat' : 'Eliminar grupo del dispositivo',
+                      style: const TextStyle(color: Color(0xFFFF5252), fontWeight: FontWeight.bold),
+                    ),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (dCtx) => AlertDialog(
+                          backgroundColor: const Color(0xFF1E1E1E),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          title: Text('Eliminar "${group.name}"', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          content: const Text(
+                            'Se eliminará este grupo y todos sus mensajes de tu teléfono.',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dCtx, false),
+                              child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                              onPressed: () => Navigator.pop(dCtx, true),
+                              child: const Text('Eliminar', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                        ),
+                      );
+
+                      if (confirmed == true) {
+                        final myUid = currentUser?.uid ?? '';
+                        if (isMember) {
+                          await _groupService.removeMemberFromGroup(group.id, myUid);
+                        }
+                        await _localDb.deleteConversation(group.id);
+                        _refreshUnreadCount();
+                        if (mounted) setState(() {});
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
       onTap: () async {
         await Navigator.push(
           context,

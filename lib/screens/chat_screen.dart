@@ -855,12 +855,45 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       } else if (val == 'wallpaper') {
                         _openWallpaperDialog();
                       } else if (val == 'clear') {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Función de vaciar chat disponible en los ajustes del chat'),
-                            backgroundColor: Color(0xFF1E1E1E),
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E1E1E),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            title: const Text('¿Vaciar los mensajes de este chat?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            content: const Text(
+                              'Los mensajes de este chat se eliminarán de este dispositivo.',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                              ),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Vaciar chat', style: TextStyle(color: Colors.white)),
+                              ),
+                            ],
                           ),
                         );
+
+                        if (confirmed == true) {
+                          final chatId = isGroup
+                              ? widget.groupId!
+                              : _chatService.getChatId(_chatService.currentUserId, widget.recipientId ?? '');
+                          await _localDb.clearChatMessages(chatId);
+                          _refreshMessages();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Chat vaciado correctamente 🧹'),
+                                backgroundColor: Color(0xFF1E1E1E),
+                              ),
+                            );
+                          }
+                        }
                       }
                     },
                     itemBuilder: (ctx) => [
@@ -934,30 +967,69 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   SafeArea(
                     top: false,
                     child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  margin: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E2428),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
-                      SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          'No puedes enviar mensajes a este grupo porque ya no eres miembro.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white70, fontSize: 13),
-                        ),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      margin: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E2428),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white10),
                       ),
-                    ],
-                  ),
-                ),
-              )
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
+                          const SizedBox(width: 8),
+                          const Flexible(
+                            child: Text(
+                              'No puedes enviar mensajes a este grupo porque ya no eres miembro.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            onTap: () async {
+                              final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  backgroundColor: const Color(0xFF1E1E1E),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  title: const Text('¿Eliminar este grupo?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  content: const Text(
+                                    'Se eliminará este grupo y todo su historial de mensajes de tu dispositivo.',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx, false),
+                                      child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      child: const Text('Eliminar', style: TextStyle(color: Colors.white)),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirmed == true && widget.groupId != null) {
+                                await _localDb.deleteConversation(widget.groupId!);
+                                if (mounted) {
+                                  Navigator.pop(context);
+                                }
+                              }
+                            },
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              child: Icon(Icons.delete_forever_rounded, color: Color(0xFFFF5252), size: 20),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
             else
               _buildInputBar(),
             if (_isPickerVisible && (!isGroup || _isMemberOfGroup))

@@ -256,6 +256,31 @@ class LocalDatabaseService {
     return ids.toList();
   }
 
+  /// Clear all messages in a conversation / group
+  Future<void> clearChatMessages(String conversationId) async {
+    final database = await db;
+    await database.delete(
+      'local_messages',
+      where: 'group_id = ? OR sender_id = ? OR recipient_id = ?',
+      whereArgs: [conversationId, conversationId, conversationId],
+    );
+  }
+
+  /// Delete a conversation / group completely from local database
+  Future<void> deleteConversation(String conversationId) async {
+    final database = await db;
+    await database.delete(
+      'local_messages',
+      where: 'group_id = ? OR sender_id = ? OR recipient_id = ?',
+      whereArgs: [conversationId, conversationId, conversationId],
+    );
+    await database.delete(
+      'conversations',
+      where: 'id = ?',
+      whereArgs: [conversationId],
+    );
+  }
+
   /// Retrieve local chat history for a conversation
   Future<List<Message>> getLocalMessages(String groupId) async {
     final database = await db;
