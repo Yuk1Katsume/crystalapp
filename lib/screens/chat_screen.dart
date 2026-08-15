@@ -248,6 +248,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   bool _recipientIsOnline = false;
   StreamSubscription? _presenceSub;
+  StreamSubscription? _groupMetaSub;
+  String _currentTitle = '';
 
   void _subscribeToPresence() {
     if (isGroup || widget.recipientId == null) return;
@@ -265,18 +267,53 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         }, onError: (_) {});
   }
 
+  void _subscribeToGroupMetadata() {
+    if (!isGroup || widget.groupId == null) return;
+    _groupMetaSub?.cancel();
+    try {
+      _groupMetaSub = SupabaseConfig.client
+          .from('messages')
+          .stream(primaryKey: ['id'])
+          .eq('group_id', 'GLOBAL_GROUPS')
+          .listen((data) {
+            for (var row in data) {
+              try {
+                if (row['message_type'] == 'group_metadata') {
+                  final enc = row['encrypted_content'] as String? ?? '';
+                  final map = jsonDecode(enc) as Map<String, dynamic>;
+                  if (map['id'] == widget.groupId) {
+                    if (mounted) {
+                      setState(() {
+                        if (map['name'] != null && map['name'].toString().isNotEmpty) {
+                          _currentTitle = map['name'].toString();
+                        }
+                        if (map['iconUrl'] != null && map['iconUrl'].toString().isNotEmpty) {
+                          _recipientAvatarUrl = map['iconUrl'].toString();
+                        }
+                      });
+                    }
+                  }
+                }
+              } catch (_) {}
+            }
+          });
+    } catch (_) {}
+  }
+
   final StreamController<List<Message>> _uiStreamController = StreamController<List<Message>>.broadcast();
   StreamSubscription<List<Message>>? _sub;
 
   @override
   void initState() {
     super.initState();
+    _currentTitle = isGroup ? (widget.groupName ?? 'Grupo') : (widget.recipientName ?? 'Chat Directo');
     _messageController.addListener(() {
       if (mounted) setState(() {});
     });
     _focusNode.addListener(_onFocusChange);
     _fetchRecipientAvatar();
     _subscribeToPresence();
+    _subscribeToGroupMetadata();
     _subscribeToMessages();
     _markConversationAsRead();
   }
@@ -284,6 +321,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _presenceSub?.cancel();
+    _groupMetaSub?.cancel();
     _voiceDurationSub?.cancel();
     _sub?.cancel();
     _uiStreamController.close();
@@ -536,9 +574,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       _keyboardHeight = bottomInset;
     }
 
-    final title = isGroup
-        ? (widget.groupName ?? 'Grupo')
-        : (widget.recipientName ?? 'Chat Directo');
+    final title = _currentTitle.isNotEmpty
+        ? _currentTitle
+        : (isGroup ? (widget.groupName ?? 'Grupo') : (widget.recipientName ?? 'Chat Directo'));
 
     final isSelectionMode = _selectedMessages.isNotEmpty;
     final singleSelected = _selectedMessages.length == 1 ? _selectedMessages.first : null;
@@ -937,6 +975,10 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             final isMe = msg.senderId == currentUser?.uid;
             final isSelected = _selectedMessages.any((m) => m.id == msg.id);
 
+            if (msg.type == ChatMessageType.system || (msg.text.startsWith('{"action"') && msg.text.endsWith('}'))) {
+              return _buildSystemEventBubble(msg);
+            }
+
             return Container(
               key: ValueKey('container_${msg.id}'),
               margin: const EdgeInsets.symmetric(vertical: 2),
@@ -1021,18 +1063,33 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final isMe = (data['actor_id'] == currentUser?.uid);
     final who = isMe ? 'Tú' : actorName;
 
+    Widget buildDivider(Widget content) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        child: Row(
+          children: [
+            Expanded(child: Divider(color: Colors.white.withOpacity(0.08), thickness: 1)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: content,
+            ),
+            Expanded(child: Divider(color: Colors.white.withOpacity(0.08), thickness: 1)),
+          ],
+        ),
+      );
+    }
+
     if (action == 'group_icon_changed') {
       final oldIcon = data['old_icon'] as String?;
       final newIcon = data['new_icon'] as String?;
 
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      return buildDivider(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E2428).withOpacity(0.95),
+            color: const Color(0xFF1E2428).withOpacity(0.75),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF2E3840)),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1041,27 +1098,27 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   CircleAvatar(
-                    radius: 20,
+                    radius: 18,
                     backgroundColor: const Color(0xFF2C2C2E),
                     backgroundImage: (oldIcon != null && oldIcon.isNotEmpty && oldIcon.startsWith('http'))
                         ? NetworkImage(oldIcon)
                         : null,
                     child: (oldIcon == null || oldIcon.isEmpty || !oldIcon.startsWith('http'))
-                        ? const Icon(Icons.groups_rounded, color: Colors.white54, size: 20)
+                        ? const Icon(Icons.groups_rounded, color: Colors.white54, size: 18)
                         : null,
                   ),
                   const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Icon(Icons.arrow_forward_rounded, color: Color(0xFFFF1744), size: 18),
+                    padding: EdgeInsets.symmetric(horizontal: 10),
+                    child: Icon(Icons.arrow_forward_rounded, color: Color(0xFFFF1744), size: 16),
                   ),
                   CircleAvatar(
-                    radius: 20,
+                    radius: 18,
                     backgroundColor: const Color(0xFF2C2C2E),
                     backgroundImage: (newIcon != null && newIcon.isNotEmpty && newIcon.startsWith('http'))
                         ? NetworkImage(newIcon)
                         : null,
                     child: (newIcon == null || newIcon.isEmpty || !newIcon.startsWith('http'))
-                        ? const Icon(Icons.groups_rounded, color: Colors.white54, size: 20)
+                        ? const Icon(Icons.groups_rounded, color: Colors.white54, size: 18)
                         : null,
                   ),
                 ],
@@ -1077,14 +1134,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         ),
       );
     } else if (action == 'group_description_changed') {
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      return buildDivider(
+        Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E2428).withOpacity(0.95),
+            color: const Color(0xFF1E2428).withOpacity(0.75),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF2E3840)),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1103,7 +1159,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       MaterialPageRoute(
                         builder: (_) => GroupInfoScreen(
                           groupId: widget.groupId!,
-                          groupName: widget.groupName ?? 'Grupo',
+                          groupName: _currentTitle.isNotEmpty ? _currentTitle : (widget.groupName ?? 'Grupo'),
                         ),
                       ),
                     );
@@ -1125,13 +1181,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       );
     } else if (action == 'group_name_changed') {
       final newName = data['name'] as String? ?? '';
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      return buildDivider(
+        Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E2428).withOpacity(0.95),
+            color: const Color(0xFF1E2428).withOpacity(0.75),
             borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
           ),
           child: Text(
             '$who cambió el nombre a "$newName"',
@@ -1143,13 +1199,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     } else if (action == 'member_left') {
       final isTargetMe = (data['target_id'] == currentUser?.uid);
       final text = isTargetMe ? 'Saliste del grupo' : '$who salió del grupo';
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      return buildDivider(
+        Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E2428).withOpacity(0.95),
+            color: const Color(0xFF1E2428).withOpacity(0.75),
             borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
           ),
           child: Text(
             text,
@@ -1164,13 +1220,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       final text = isTargetMe
           ? '$who te eliminó del grupo'
           : (isMe ? 'Eliminaste a $targetName' : '$who eliminó a $targetName');
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      return buildDivider(
+        Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E2428).withOpacity(0.95),
+            color: const Color(0xFF1E2428).withOpacity(0.75),
             borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
           ),
           child: Text(
             text,
@@ -1181,13 +1237,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       );
     }
 
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+    return buildDivider(
+      Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E2428).withOpacity(0.9),
+          color: const Color(0xFF1E2428).withOpacity(0.75),
           borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
         ),
         child: Text(
           msg.text,

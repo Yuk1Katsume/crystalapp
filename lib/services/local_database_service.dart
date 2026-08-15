@@ -304,6 +304,8 @@ class LocalDatabaseService {
       type = ChatMessageType.image;
     } else if (msgType == 'audio') {
       type = ChatMessageType.audio;
+    } else if (msgType == 'system') {
+      type = ChatMessageType.system;
     }
 
     final statusStr = item['status'] as String? ?? 'sent';
