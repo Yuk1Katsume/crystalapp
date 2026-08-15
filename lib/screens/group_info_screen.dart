@@ -385,11 +385,10 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
           Navigator.pop(ctx);
           if (newMemberIds.isEmpty) return;
 
-          setState(() => _isLoading = true);
-          await _groupService.addMembersToGroup(widget.groupId, newMemberIds);
-          await _loadGroupDetails();
+          final ok = await _groupService.addMembersToGroup(widget.groupId, newMemberIds);
+          // No need to call _loadGroupDetails() — the Firestore stream will update the UI
 
-          if (mounted) {
+          if (ok && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 backgroundColor: const Color(0xFF1E1E1E),
@@ -1018,11 +1017,10 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
 
                   if (confirmed == true) {
                     final ok = await _groupService.removeMemberFromGroup(widget.groupId, uid);
+                    // Do NOT manually update _memberIds/_membersData here — the
+                    // Firestore stream (_firestoreSub) will push the update instantly
+                    // and avoid race conditions / double-refresh.
                     if (ok && mounted) {
-                      setState(() {
-                        _memberIds.remove(uid);
-                        _membersData.removeWhere((m) => m['id'] == uid);
-                      });
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('$name fue eliminado del grupo'), backgroundColor: const Color(0xFF1E1E1E)),
                       );

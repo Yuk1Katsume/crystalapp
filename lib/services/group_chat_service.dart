@@ -165,9 +165,13 @@ class GroupChatService {
                 if (group.memberIds.isEmpty) {
                   // Group was deleted entirely
                   currentGroupsMap.remove(group.id);
-                } else if (currentGroupsMap.containsKey(group.id) || group.memberIds.contains(myUid)) {
-                  // Keep group visible even if user was removed so they keep their chat history until they delete it
+                } else if (group.memberIds.contains(myUid)) {
+                  // User is still a member — keep/update the group
                   currentGroupsMap[group.id] = group;
+                } else {
+                  // User was removed — remove from visible list
+                  // (chat history stays in local SQLite until the user manually deletes it)
+                  currentGroupsMap.remove(group.id);
                 }
               } catch (_) {}
             }
@@ -308,7 +312,13 @@ class GroupChatService {
           'target_name': targetName,
         });
 
-        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        // Include the removed member so they also receive the system message in real time
+        final sysRecipients = [...updatedMembers, memberId];
+        await sendGroupSystemMessage(
+          groupId: groupId,
+          systemText: sysText,
+          memberIds: sysRecipients,
+        );
 
         // If admin changed, notify the group chat
         if (newAdminId != group.adminId) {
@@ -317,7 +327,11 @@ class GroupChatService {
             'actor_id': newAdminId,
             'actor_name': newAdminName ?? 'Un miembro',
           });
-          await sendGroupSystemMessage(groupId: groupId, systemText: adminSysText);
+          await sendGroupSystemMessage(
+            groupId: groupId,
+            systemText: adminSysText,
+            memberIds: updatedMembers,
+          );
         }
       } catch (_) {}
 
@@ -390,7 +404,12 @@ class GroupChatService {
             'target_id': newUid,
             'target_name': addedName,
           });
-          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+          // updatedMembers already includes the newly added member(s)
+          await sendGroupSystemMessage(
+            groupId: groupId,
+            systemText: sysText,
+            memberIds: updatedMembers,
+          );
         }
       } catch (_) {}
 
@@ -498,6 +517,7 @@ class GroupChatService {
       } catch (_) {}
 
       // 5. Send system message in the group chat
+      final groupMemberIds = updatedGroup.memberIds;
       if (iconUrl != null) {
         final sysText = jsonEncode({
           'action': 'group_icon_changed',
@@ -506,7 +526,11 @@ class GroupChatService {
           'old_icon': oldIconUrl ?? '',
           'new_icon': iconUrl,
         });
-        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        await sendGroupSystemMessage(
+          groupId: groupId,
+          systemText: sysText,
+          memberIds: groupMemberIds,
+        );
       } else if (description != null) {
         final sysText = jsonEncode({
           'action': 'group_description_changed',
@@ -514,7 +538,11 @@ class GroupChatService {
           'actor_name': actorName,
           'description': description,
         });
-        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        await sendGroupSystemMessage(
+          groupId: groupId,
+          systemText: sysText,
+          memberIds: groupMemberIds,
+        );
       } else if (name != null) {
         final sysText = jsonEncode({
           'action': 'group_name_changed',
@@ -522,7 +550,11 @@ class GroupChatService {
           'actor_name': actorName,
           'name': name,
         });
-        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        await sendGroupSystemMessage(
+          groupId: groupId,
+          systemText: sysText,
+          memberIds: groupMemberIds,
+        );
       }
 
       return true;
@@ -532,15 +564,18 @@ class GroupChatService {
   }
 
   /// Send system message in a group (photo changed, description changed, etc.)
+  /// [memberIds]: list of user IDs that should receive the message in real time.
+  /// If omitted, the message is saved locally only (no Supabase push).
   Future<void> sendGroupSystemMessage({
     required String groupId,
     required String systemText,
+    List<String>? memberIds,
   }) async {
     final currentUid = _auth.currentUser?.uid ?? '';
     final now = DateTime.now();
     final msgId = const Uuid().v4();
 
-    // 1. Save locally in SQLite
+    // 1. Save locally in SQLite (always, for the sender)
     await _localDb.saveLocalMessage(
       id: msgId,
       senderId: currentUid,
@@ -553,17 +588,23 @@ class GroupChatService {
       status: 'sent',
     );
 
-    // 2. Broadcast single row to group stream
-    try {
-      await SupabaseConfig.client.from('messages').insert({
-        'sender_id': currentUid,
-        'recipient_id': 'ALL',
-        'group_id': groupId,
-        'message_type': 'system',
-        'encrypted_content': systemText,
-        'created_at': now.toIso8601String(),
-      });
-    } catch (_) {}
+    // 2. Send one targeted row per member so each member's stream receives it
+    // (same pattern as sendGroupMessage for reliability)
+    if (memberIds != null && memberIds.isNotEmpty) {
+      for (final memberId in memberIds) {
+        if (memberId == currentUid) continue; // sender already has it locally
+        try {
+          await SupabaseConfig.client.from('messages').insert({
+            'sender_id': currentUid,
+            'recipient_id': memberId,
+            'group_id': groupId,
+            'message_type': 'system',
+            'encrypted_content': systemText,
+            'created_at': now.toIso8601String(),
+          });
+        } catch (_) {}
+      }
+    }
   }
 
   /// Update group name
