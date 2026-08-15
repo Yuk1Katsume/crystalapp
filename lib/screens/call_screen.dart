@@ -115,6 +115,10 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
 
       if (status == 'connected' && !_isConnected) {
         await _soundPlayer.stop();
+        // Ensure remote stream audio tracks are enabled and unmuted
+        _callService.remoteStream?.getAudioTracks().forEach((track) {
+          track.enabled = true;
+        });
         if (mounted) {
           setState(() {
             _isConnected = true;

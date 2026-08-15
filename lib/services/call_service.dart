@@ -706,6 +706,7 @@ class CallService {
       _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
       _peerConnection = await createPeerConnection(_iceServers);
 
+      // Add local audio/video tracks to peer connection
       _localStream?.getTracks().forEach((track) {
         _peerConnection?.addTrack(track, _localStream!);
       });
@@ -723,6 +724,7 @@ class CallService {
         }
       };
 
+      // Set audio output correctly for voice calls (earpiece by default)
       try {
         Helper.setSpeakerphoneOn(false);
       } catch (_) {}

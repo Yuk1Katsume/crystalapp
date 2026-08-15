@@ -403,14 +403,19 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   }
 
   Future<void> _leaveGroup() async {
+    final myUid = _authService.currentUser?.uid ?? '';
+    final isMember = _memberIds.contains(myUid);
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('¿Salir del grupo "$_groupName"?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: const Text(
-          'Ya no recibirás los mensajes enviados en este grupo.',
+        title: Text(isMember ? '¿Salir del grupo "$_groupName"?' : '¿Eliminar grupo del dispositivo?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          isMember
+              ? 'Ya no podrás enviar ni recibir mensajes en este grupo.'
+              : 'Se eliminará este grupo y todo su historial de mensajes de tu teléfono.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -421,15 +426,18 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Salir', style: TextStyle(color: Colors.white)),
+            child: Text(isMember ? 'Salir' : 'Eliminar', style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
 
     if (confirmed == true) {
-      final currentUid = _authService.currentUser?.uid ?? '';
-      await _groupService.removeMemberFromGroup(widget.groupId, currentUid);
+      if (isMember) {
+        await _groupService.removeMemberFromGroup(widget.groupId, myUid);
+      } else {
+        await _localDb.deleteConversation(widget.groupId);
+      }
 
       if (mounted) {
         Navigator.popUntil(context, (route) => route.isFirst);
@@ -923,7 +931,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
 
                         const SizedBox(height: 14),
 
-                        // Leave Group Action
+                        // Leave / Delete Group Action
                         Container(
                           width: double.infinity,
                           decoration: BoxDecoration(
@@ -933,10 +941,14 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                           ),
                           child: ListTile(
                             onTap: _leaveGroup,
-                            leading: const Icon(Icons.exit_to_app_rounded, color: Color(0xFFFF1744), size: 24),
-                            title: const Text(
-                              'Salir del grupo',
-                              style: TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold, fontSize: 15),
+                            leading: Icon(
+                              _memberIds.contains(currentUid) ? Icons.exit_to_app_rounded : Icons.delete_forever_rounded,
+                              color: const Color(0xFFFF1744),
+                              size: 24,
+                            ),
+                            title: Text(
+                              _memberIds.contains(currentUid) ? 'Salir del grupo' : 'Eliminar grupo del dispositivo',
+                              style: const TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold, fontSize: 15),
                             ),
                           ),
                         ),
