@@ -855,28 +855,31 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             Expanded(child: _buildMessageList()),
             if (_replyingToMessage != null) _buildReplyPreview(),
             if (isGroup && !_isMemberOfGroup)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                margin: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E2428),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
-                    SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        'No puedes enviar mensajes a este grupo porque ya no eres miembro.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
+              SafeArea(
+                top: false,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  margin: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E2428),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
+                      SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'No puedes enviar mensajes a este grupo porque ya no eres miembro.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               )
             else
@@ -1284,6 +1287,27 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             text,
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    } else if (action == 'member_added') {
+      final targetName = data['target_name'] as String? ?? 'un usuario';
+      final isTargetMe = (data['target_id'] == currentUser?.uid);
+      final text = isTargetMe
+          ? '$who te añadió al grupo'
+          : (isMe ? 'Añadiste a $targetName' : '$who añadió a $targetName');
+      return buildDivider(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.75),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.greenAccent.withOpacity(0.2)),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF69F0AE), fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
       );

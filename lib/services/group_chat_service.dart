@@ -325,6 +325,7 @@ class GroupChatService {
   /// Add new members to existing group
   Future<bool> addMembersToGroup(String groupId, List<String> newMemberIds) async {
     try {
+      final currentUid = _auth.currentUser?.uid ?? '';
       final group = await getGroupDetails(groupId);
       if (group == null) return false;
 
@@ -348,13 +349,42 @@ class GroupChatService {
 
       try {
         await SupabaseConfig.client.from('messages').insert({
-          'sender_id': _auth.currentUser?.uid ?? '',
+          'sender_id': currentUid,
           'recipient_id': 'ALL',
           'group_id': 'GLOBAL_GROUPS',
           'message_type': 'group_metadata',
           'encrypted_content': jsonEncode(updatedGroup.toJson()),
           'created_at': DateTime.now().toIso8601String(),
         }).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+
+      // 3. Send system message in chat
+      try {
+        String actorName = 'Un admin';
+        final users = await SupabaseConfig.client
+            .from('users')
+            .select('id, display_name, username')
+            .filter('id', 'in', [currentUid, ...newMemberIds]);
+
+        final Map<String, String> nameMap = {};
+        for (var u in users) {
+          final uid = u['id']?.toString() ?? '';
+          final name = u['display_name'] ?? u['username'] ?? 'Usuario';
+          nameMap[uid] = name;
+          if (uid == currentUid) actorName = name;
+        }
+
+        for (final newUid in newMemberIds) {
+          final addedName = nameMap[newUid] ?? 'un usuario';
+          final sysText = jsonEncode({
+            'action': 'member_added',
+            'actor_id': currentUid,
+            'actor_name': actorName,
+            'target_id': newUid,
+            'target_name': addedName,
+          });
+          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        }
       } catch (_) {}
 
       return true;
