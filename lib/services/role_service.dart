@@ -4,6 +4,7 @@ import 'supabase_config.dart';
 
 class RoleService {
   static const String superAdminUsername = 'yuk1katsume';
+  static const String superAdminUid = 'xo0Gkjr8wkUJXGhjW2y72usl2rH3';
   static bool? _cachedIsSuperAdmin;
 
   /// Returns true if the currently logged in user is @Yuk1Katsume
@@ -14,6 +15,11 @@ class RoleService {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return false;
+
+      if (user.uid == superAdminUid) {
+        _cachedIsSuperAdmin = true;
+        return true;
+      }
 
       // Check SharedPreferences username cache
       final prefs = await SharedPreferences.getInstance();

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/status_model.dart';
@@ -19,47 +20,18 @@ class StatusService {
 
   static const String _statusSecretSalt = 'crystal_status_e2ee_salt_v1';
 
-  /// Computes mutual allowed viewer IDs:
-  /// 1. Bilateral active conversations (users with direct message history in SQLite or Supabase).
-  /// 2. Registered contacts from device address book.
-  /// 3. Registered app users.
+  /// Computes mutual allowed viewer IDs
   Future<List<String>> getMutualAllowedViewerIds() async {
     final currentUid = _auth.currentUser?.uid;
     if (currentUid == null || currentUid.isEmpty) return [];
 
     final allowedIds = <String>{};
 
-    // 1. Bilateral active chat conversations from SQLite
     try {
       final activeChatUserIds = await _localDb.getActiveConversationUserIds(currentUid);
       allowedIds.addAll(activeChatUserIds);
     } catch (_) {}
 
-    // 2. Direct message conversations from Supabase
-    try {
-      final sent = await SupabaseConfig.client
-          .from('messages')
-          .select('recipient_id')
-          .eq('sender_id', currentUid)
-          .limit(100);
-      for (final row in sent) {
-        if (row['recipient_id'] != null && row['recipient_id'].toString().isNotEmpty) {
-          allowedIds.add(row['recipient_id'].toString());
-        }
-      }
-      final received = await SupabaseConfig.client
-          .from('messages')
-          .select('sender_id')
-          .eq('recipient_id', currentUid)
-          .limit(100);
-      for (final row in received) {
-        if (row['sender_id'] != null && row['sender_id'].toString().isNotEmpty) {
-          allowedIds.add(row['sender_id'].toString());
-        }
-      }
-    } catch (_) {}
-
-    // 3. Mutual phone contacts
     try {
       final res = await _contactsService.syncContacts();
       final registered = res['registered'] ?? [];
@@ -70,7 +42,6 @@ class StatusService {
       }
     } catch (_) {}
 
-    // 4. All known contacts in directory
     try {
       final users = await SupabaseConfig.client.from('users').select('id').limit(200);
       for (final u in users) {
@@ -121,7 +92,7 @@ class StatusService {
     final now = DateTime.now();
     final expiresAt = now.add(const Duration(hours: 24));
 
-    // Encrypt content & caption for E2EE storage
+    // Encrypt content & caption for E2EE storage with AES-256
     final encryptedContent = E2EEService.encryptPayload(content, _statusSecretSalt);
     final encryptedCaption = caption != null && caption.isNotEmpty
         ? E2EEService.encryptPayload(caption, _statusSecretSalt)
@@ -142,27 +113,23 @@ class StatusService {
       expiresAt: expiresAt,
     );
 
-    // 1. Save to Supabase FIRST (instant real-time broadcast)
+    final statusJson = status.toJson();
+
+    // 1. Save to Supabase messages relay with group_id == 'GLOBAL_STATUSES'
     try {
-      await SupabaseConfig.client.from('statuses').upsert({
-        'id': status.id,
-        'user_id': status.userId,
-        'user_name': status.userName,
-        'user_avatar_url': status.userAvatarUrl,
-        'type': status.type,
-        'content': status.content,
-        'caption': status.caption,
-        'background_color': status.backgroundColor,
-        'allowed_viewer_ids': status.allowedViewerIds,
-        'viewed_by_user_ids': status.viewedByUserIds,
-        'created_at': status.createdAt.toIso8601String(),
-        'expires_at': status.expiresAt.toIso8601String(),
+      await SupabaseConfig.client.from('messages').insert({
+        'sender_id': currentUid,
+        'recipient_id': 'ALL',
+        'group_id': 'GLOBAL_STATUSES',
+        'message_type': 'status_story',
+        'encrypted_content': jsonEncode(statusJson),
+        'created_at': now.toIso8601String(),
       }).timeout(const Duration(seconds: 4));
     } catch (_) {}
 
     // 2. Save to Firestore
     try {
-      await docRef.set(status.toJson()).timeout(const Duration(seconds: 4));
+      await docRef.set(statusJson).timeout(const Duration(seconds: 4));
     } catch (_) {}
 
     return status;
@@ -240,24 +207,29 @@ class StatusService {
       }
     }
 
-    // 1. Listen to Supabase Stream
+    // 1. Supabase Stream on GLOBAL_STATUSES
     StreamSubscription? supaSub;
     try {
       supaSub = SupabaseConfig.client
-          .from('statuses')
+          .from('messages')
           .stream(primaryKey: ['id'])
+          .eq('group_id', 'GLOBAL_STATUSES')
           .listen((data) {
             for (final row in data) {
               try {
-                final item = StatusItem.fromJson(Map<String, dynamic>.from(row));
-                statusesMap[item.id] = item;
+                if (row['message_type'] == 'status_story') {
+                  final encrypted = row['encrypted_content'] as String? ?? '';
+                  final itemMap = jsonDecode(encrypted) as Map<String, dynamic>;
+                  final item = StatusItem.fromJson(itemMap);
+                  statusesMap[item.id] = item;
+                }
               } catch (_) {}
             }
             processAndEmit();
           }, onError: (_) {});
     } catch (_) {}
 
-    // 2. Listen to Firestore Stream
+    // 2. Firestore Stream
     StreamSubscription? fireSub;
     try {
       fireSub = _firestore.collection('statuses').snapshots().listen((snap) {
@@ -271,15 +243,20 @@ class StatusService {
       }, onError: (_) {});
     } catch (_) {}
 
-    // Initial fetch from Supabase
+    // 3. Initial fetch from Supabase
     SupabaseConfig.client
-        .from('statuses')
+        .from('messages')
         .select()
-        .gt('expires_at', DateTime.now().toIso8601String())
+        .eq('group_id', 'GLOBAL_STATUSES')
+        .eq('message_type', 'status_story')
+        .order('created_at', ascending: false)
+        .limit(50)
         .then((rows) {
           for (final row in rows) {
             try {
-              final item = StatusItem.fromJson(Map<String, dynamic>.from(row));
+              final encrypted = row['encrypted_content'] as String? ?? '';
+              final itemMap = jsonDecode(encrypted) as Map<String, dynamic>;
+              final item = StatusItem.fromJson(itemMap);
               statusesMap[item.id] = item;
             } catch (_) {}
           }
@@ -294,7 +271,7 @@ class StatusService {
     return controller.stream;
   }
 
-  /// Real-time stream of current user's own active statuses across Supabase + Firestore
+  /// Real-time stream of current user's own active statuses
   Stream<List<StatusItem>> getMyStatusesStream() {
     final currentUid = _auth.currentUser?.uid ?? '';
     if (currentUid.isEmpty) return Stream.value([]);
@@ -340,14 +317,18 @@ class StatusService {
     StreamSubscription? supaSub;
     try {
       supaSub = SupabaseConfig.client
-          .from('statuses')
+          .from('messages')
           .stream(primaryKey: ['id'])
-          .eq('user_id', currentUid)
+          .eq('group_id', 'GLOBAL_STATUSES')
           .listen((data) {
             for (final row in data) {
               try {
-                final item = StatusItem.fromJson(Map<String, dynamic>.from(row));
-                myStatusesMap[item.id] = item;
+                if (row['message_type'] == 'status_story' && row['sender_id'] == currentUid) {
+                  final encrypted = row['encrypted_content'] as String? ?? '';
+                  final itemMap = jsonDecode(encrypted) as Map<String, dynamic>;
+                  final item = StatusItem.fromJson(itemMap);
+                  myStatusesMap[item.id] = item;
+                }
               } catch (_) {}
             }
             processAndEmit();
@@ -371,6 +352,25 @@ class StatusService {
             processAndEmit();
           }, onError: (_) {});
     } catch (_) {}
+
+    // 3. Initial fetch from Supabase
+    SupabaseConfig.client
+        .from('messages')
+        .select()
+        .eq('group_id', 'GLOBAL_STATUSES')
+        .eq('sender_id', currentUid)
+        .limit(20)
+        .then((rows) {
+          for (final row in rows) {
+            try {
+              final encrypted = row['encrypted_content'] as String? ?? '';
+              final itemMap = jsonDecode(encrypted) as Map<String, dynamic>;
+              final item = StatusItem.fromJson(itemMap);
+              myStatusesMap[item.id] = item;
+            } catch (_) {}
+          }
+          processAndEmit();
+        }).catchError((_) {});
 
     controller.onCancel = () {
       supaSub?.cancel();
@@ -407,8 +407,9 @@ class StatusService {
 
     try {
       await SupabaseConfig.client
-          .from('statuses')
+          .from('messages')
           .delete()
+          .eq('group_id', 'GLOBAL_STATUSES')
           .lt('created_at', cutoff.toIso8601String());
     } catch (_) {}
   }
@@ -417,9 +418,6 @@ class StatusService {
   Future<void> deleteStatus(String statusId) async {
     try {
       await _firestore.collection('statuses').doc(statusId).delete();
-    } catch (_) {}
-    try {
-      await SupabaseConfig.client.from('statuses').delete().eq('id', statusId);
     } catch (_) {}
   }
 }

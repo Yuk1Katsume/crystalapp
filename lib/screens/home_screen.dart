@@ -85,11 +85,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           context,
           MaterialPageRoute(
             builder: (_) => IncomingCallScreen(
-              callId: data['id'] ?? data['doc_id'] ?? '',
-              callerId: data['caller_id'] ?? '',
-              callerName: data['caller_name'] ?? 'Contacto',
-              callerAvatar: data['caller_avatar'],
-              isVideo: data['is_video'] ?? false,
+              callId: (data['call_id'] ?? data['id'] ?? data['doc_id'] ?? '').toString(),
+              callerId: (data['caller_id'] ?? '').toString(),
+              callerName: (data['caller_name'] ?? 'Contacto').toString(),
+              callerAvatar: data['caller_avatar'] as String?,
+              isVideo: data['is_video'] == true,
             ),
           ),
         );

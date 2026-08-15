@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'e2ee_service.dart';
@@ -336,21 +337,15 @@ class VoiceNoteService {
         encryptedBytes = Uint8List.fromList(base64Decode(b64));
       } else if (rawMediaUrl.startsWith('AUDENC_URL:')) {
         final url = rawMediaUrl.substring(11);
-        final res = await HttpClient().getUrl(Uri.parse(url));
-        final response = await res.close();
-        final bytesList = <int>[];
-        await for (var chunk in response) {
-          bytesList.addAll(chunk);
+        final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          encryptedBytes = response.bodyBytes;
         }
-        encryptedBytes = Uint8List.fromList(bytesList);
       } else if (rawMediaUrl.startsWith('http')) {
-        final res = await HttpClient().getUrl(Uri.parse(rawMediaUrl));
-        final response = await res.close();
-        final bytesList = <int>[];
-        await for (var chunk in response) {
-          bytesList.addAll(chunk);
+        final response = await http.get(Uri.parse(rawMediaUrl)).timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          encryptedBytes = response.bodyBytes;
         }
-        encryptedBytes = Uint8List.fromList(bytesList);
       }
 
       if (encryptedBytes != null) {

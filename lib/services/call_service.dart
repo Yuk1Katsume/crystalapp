@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -12,7 +13,6 @@ class CallService {
   static final CallService _instance = CallService._internal();
   factory CallService() => _instance;
   CallService._internal() {
-    // Listen to Firebase Auth state changes to auto-start listener whenever user logs in
     _auth.authStateChanges().listen((user) {
       if (user != null && user.uid.isNotEmpty) {
         startIncomingCallListener();
@@ -59,7 +59,7 @@ class CallService {
     ],
   };
 
-  /// Start listening for incoming call signals in real-time across Supabase + Firestore + Polling fallback
+  /// Start listening for incoming call signals across Supabase Realtime + Firestore
   void startIncomingCallListener() {
     final myUid = _auth.currentUser?.uid;
     if (myUid == null || myUid.isEmpty) return;
@@ -68,15 +68,25 @@ class CallService {
     _supabaseIncomingSub?.cancel();
     _pollingTimer?.cancel();
 
-    // 1. Supabase Real-time Stream
+    // 1. Supabase Real-time messages stream where recipient_id == myUid and message_type == 'call_signal'
     try {
       _supabaseIncomingSub = SupabaseConfig.client
-          .from('call_signals')
+          .from('messages')
           .stream(primaryKey: ['id'])
-          .eq('receiver_id', myUid)
+          .eq('recipient_id', myUid)
           .listen((data) {
             for (final item in data) {
-              _handleIncomingCallData(Map<String, dynamic>.from(item));
+              if (item['message_type'] == 'call_signal') {
+                try {
+                  final encrypted = item['encrypted_content'] as String? ?? '';
+                  final signalData = jsonDecode(encrypted) as Map<String, dynamic>;
+                  signalData['message_id'] = item['id'];
+                  handleIncomingCallSignal(signalData);
+
+                  // Delete signal from Supabase relay after processing
+                  SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
+                } catch (_) {}
+              }
             }
           }, onError: (_) {});
     } catch (_) {}
@@ -91,21 +101,21 @@ class CallService {
             for (final doc in snap.docs) {
               final data = doc.data();
               data['doc_id'] = doc.id;
-              _handleIncomingCallData(data);
+              handleIncomingCallSignal(data);
             }
           }, onError: (_) {});
     } catch (_) {}
 
     // 3. Fast Periodic Polling (every 3 seconds) for instant sync & missed calls
     _pollingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      _pollRecentCalls();
+      _pollPendingCallSignals();
     });
 
-    _pollRecentCalls();
+    _pollPendingCallSignals();
   }
 
-  void _handleIncomingCallData(Map<String, dynamic> data) async {
-    final callId = (data['id'] ?? data['doc_id'] ?? '').toString();
+  void handleIncomingCallSignal(Map<String, dynamic> data) async {
+    final callId = (data['call_id'] ?? data['id'] ?? data['doc_id'] ?? '').toString();
     if (callId.isEmpty) return;
 
     final status = (data['status'] ?? 'ringing').toString();
@@ -129,7 +139,6 @@ class CallService {
         _incomingCallController.add(data);
       }
     } else if (status == 'ended' || status == 'rejected') {
-      // If call was ringing and caller ended it before we answered, log as MISSED call!
       if (_activeRingingCallIds.contains(callId)) {
         _activeRingingCallIds.remove(callId);
         await _notificationService.cancelCallNotification(callId.hashCode);
@@ -156,20 +165,27 @@ class CallService {
     }
   }
 
-  Future<void> _pollRecentCalls() async {
+  Future<void> _pollPendingCallSignals() async {
     final myUid = _auth.currentUser?.uid;
     if (myUid == null || myUid.isEmpty) return;
 
     try {
       final res = await SupabaseConfig.client
-          .from('call_signals')
+          .from('messages')
           .select()
-          .eq('receiver_id', myUid)
+          .eq('recipient_id', myUid)
+          .eq('message_type', 'call_signal')
           .order('created_at', ascending: false)
-          .limit(10);
+          .limit(5);
 
       for (final item in res) {
-        _handleIncomingCallData(Map<String, dynamic>.from(item));
+        try {
+          final encrypted = item['encrypted_content'] as String? ?? '';
+          final signalData = jsonDecode(encrypted) as Map<String, dynamic>;
+          signalData['message_id'] = item['id'];
+          handleIncomingCallSignal(signalData);
+          SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
+        } catch (_) {}
       }
     } catch (_) {}
   }
@@ -186,7 +202,7 @@ class CallService {
     final myAvatar = currentUserAvatar;
     final callId = _uuid.v4();
 
-    // 1. Initialize WebRTC Media & Peer Connection (safe try/catch)
+    // 1. Initialize WebRTC Media & Peer Connection
     RTCSessionDescription? offer;
     try {
       await _initWebRTC(isVideo: isVideo, isCaller: true, callId: callId);
@@ -202,8 +218,8 @@ class CallService {
       }
     } catch (_) {}
 
-    final callData = {
-      'id': callId,
+    final callPayload = {
+      'call_id': callId,
       'caller_id': myUid,
       'caller_name': myName,
       'caller_avatar': myAvatar,
@@ -216,42 +232,44 @@ class CallService {
       'created_at': DateTime.now().toIso8601String(),
     };
 
-    // 2. Post signal to Supabase FIRST (instant real-time relay)
+    // 2. Post signal to Supabase messages relay (INSTANT)
     try {
-      await SupabaseConfig.client.from('call_signals').upsert({
-        'id': callId,
-        'caller_id': myUid,
-        'caller_name': myName,
-        'caller_avatar': myAvatar,
-        'receiver_id': receiverId,
-        'receiver_name': receiverName,
-        'receiver_avatar': receiverAvatar,
-        'status': 'ringing',
-        'is_video': isVideo,
+      await SupabaseConfig.client.from('messages').insert({
+        'sender_id': myUid,
+        'recipient_id': receiverId,
+        'group_id': 'CALL_$callId',
+        'message_type': 'call_signal',
+        'encrypted_content': jsonEncode(callPayload),
         'created_at': DateTime.now().toIso8601String(),
       }).timeout(const Duration(seconds: 4));
     } catch (_) {}
 
     // 3. Post signal to Firestore
     try {
-      await _firestore.collection('call_signals').doc(callId).set(callData).timeout(const Duration(seconds: 4));
+      await _firestore.collection('call_signals').doc(callId).set(callPayload).timeout(const Duration(seconds: 4));
     } catch (_) {}
 
     return callId;
   }
 
-  /// Listen to call state changes across both Supabase and Firestore
+  /// Listen to call state changes across both Supabase messages stream and Firestore
   Stream<Map<String, dynamic>> getCallStream(String callId) {
     final controller = StreamController<Map<String, dynamic>>.broadcast();
 
-    // Supabase Stream
+    // Supabase Stream on group_id == 'CALL_$callId'
     final supaSub = SupabaseConfig.client
-        .from('call_signals')
+        .from('messages')
         .stream(primaryKey: ['id'])
-        .eq('id', callId)
+        .eq('group_id', 'CALL_$callId')
         .listen((data) {
-          if (data.isNotEmpty && !controller.isClosed) {
-            controller.add(Map<String, dynamic>.from(data.first));
+          for (final row in data) {
+            try {
+              final encrypted = row['encrypted_content'] as String? ?? '';
+              final signalData = jsonDecode(encrypted) as Map<String, dynamic>;
+              if (!controller.isClosed) {
+                controller.add(signalData);
+              }
+            } catch (_) {}
           }
         }, onError: (_) {});
 
@@ -259,7 +277,7 @@ class CallService {
     final fireSub = _firestore.collection('call_signals').doc(callId).snapshots().listen((doc) {
       if (doc.exists && !controller.isClosed) {
         final d = doc.data() ?? {};
-        d['id'] = doc.id;
+        d['call_id'] = doc.id;
         controller.add(d);
       }
     }, onError: (_) {});
@@ -281,8 +299,16 @@ class CallService {
       // 1. Fetch Call Doc
       Map<String, dynamic>? data;
       try {
-        final supaRes = await SupabaseConfig.client.from('call_signals').select().eq('id', callId).maybeSingle();
-        if (supaRes != null) data = Map<String, dynamic>.from(supaRes);
+        final res = await SupabaseConfig.client
+            .from('messages')
+            .select()
+            .eq('group_id', 'CALL_$callId')
+            .order('created_at', ascending: false)
+            .limit(1);
+        if (res.isNotEmpty) {
+          final enc = res.first['encrypted_content'] as String? ?? '';
+          data = jsonDecode(enc) as Map<String, dynamic>;
+        }
       } catch (_) {}
 
       if (data == null) {
@@ -292,6 +318,7 @@ class CallService {
 
       final isVideo = data?['is_video'] == true;
       final offerMap = data?['sdp_offer'] as Map<String, dynamic>?;
+      final callerId = (data?['caller_id'] ?? '').toString();
 
       // 2. Initialize WebRTC
       await _initWebRTC(isVideo: isVideo, isCaller: false, callId: callId);
@@ -315,17 +342,30 @@ class CallService {
         await _peerConnection?.setLocalDescription(answer);
       }
 
-      // 5. Update Call status to connected
-      try {
-        await SupabaseConfig.client.from('call_signals').update({'status': 'connected'}).eq('id', callId);
-      } catch (_) {}
+      final answerPayload = {
+        'call_id': callId,
+        'status': 'connected',
+        'sdp_answer': answer?.toMap(),
+        'connected_at': DateTime.now().toIso8601String(),
+      };
 
+      // 5. Post connected event to Supabase
+      if (callerId.isNotEmpty) {
+        try {
+          await SupabaseConfig.client.from('messages').insert({
+            'sender_id': currentUserId,
+            'recipient_id': callerId,
+            'group_id': 'CALL_$callId',
+            'message_type': 'call_signal',
+            'encrypted_content': jsonEncode(answerPayload),
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        } catch (_) {}
+      }
+
+      // 6. Post connected event to Firestore
       try {
-        await _firestore.collection('call_signals').doc(callId).update({
-          'status': 'connected',
-          'sdp_answer': answer?.toMap(),
-          'connected_at': DateTime.now().toIso8601String(),
-        });
+        await _firestore.collection('call_signals').doc(callId).set(answerPayload, SetOptions(merge: true));
       } catch (_) {}
     } catch (_) {}
   }
@@ -345,9 +385,25 @@ class CallService {
     _processedCallIds.add(callId);
     await _notificationService.cancelCallNotification(callId.hashCode);
 
+    final payload = {
+      'call_id': callId,
+      'status': 'rejected',
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+
     try {
-      await SupabaseConfig.client.from('call_signals').update({'status': 'rejected'}).eq('id', callId);
-      await _firestore.collection('call_signals').doc(callId).update({'status': 'rejected'});
+      await SupabaseConfig.client.from('messages').insert({
+        'sender_id': currentUserId,
+        'recipient_id': callerId,
+        'group_id': 'CALL_$callId',
+        'message_type': 'call_signal',
+        'encrypted_content': jsonEncode(payload),
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
+
+    try {
+      await _firestore.collection('call_signals').doc(callId).set(payload, SetOptions(merge: true));
     } catch (_) {}
 
     _cleanupWebRTC();
@@ -386,9 +442,28 @@ class CallService {
     _processedCallIds.add(callId);
     await _notificationService.cancelCallNotification(callId.hashCode);
 
+    final otherUid = direction == CallDirection.outgoing ? receiverId : callerId;
+
+    final payload = {
+      'call_id': callId,
+      'status': 'ended',
+      'duration': durationSeconds,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+
     try {
-      await SupabaseConfig.client.from('call_signals').update({'status': 'ended'}).eq('id', callId);
-      await _firestore.collection('call_signals').doc(callId).update({'status': 'ended'});
+      await SupabaseConfig.client.from('messages').insert({
+        'sender_id': currentUserId,
+        'recipient_id': otherUid,
+        'group_id': 'CALL_$callId',
+        'message_type': 'call_signal',
+        'encrypted_content': jsonEncode(payload),
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
+
+    try {
+      await _firestore.collection('call_signals').doc(callId).set(payload, SetOptions(merge: true));
     } catch (_) {}
 
     _cleanupWebRTC();

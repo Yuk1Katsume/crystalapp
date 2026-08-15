@@ -2,7 +2,7 @@ name: crystalapp
 description: "CrystalApp - WhatsApp-like chat app with Firebase"
 publish_to: 'none'
 
-version: 1.4.7+100037
+version: 1.4.8+100038
 
 environment:
   sdk: ^3.12.2
@@ -27,6 +27,7 @@ dependencies:
 
   # Encryption
   crypto: ^3.0.3
+  encrypt: ^5.0.3
 
   # Real-time
   flutter_riverpod: ^2.4.9

@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import '../models/message_model.dart';
+import 'call_service.dart';
 import 'e2ee_service.dart';
 import 'local_database_service.dart';
 import 'supabase_config.dart';
@@ -18,18 +20,19 @@ const String _audioPayloadPrefix = 'AUDENC:';
 class ChatService {
   SupabaseClient get _supabase => SupabaseConfig.client;
   final LocalDatabaseService _localDb = LocalDatabaseService();
+  StreamSubscription? _incomingMsgSub;
+
   String get currentUserId => fb_auth.FirebaseAuth.instance.currentUser?.uid ?? '';
 
-  StreamSubscription? _globalIncomingSub;
   final StreamController<void> _incomingMessagesNotification = StreamController<void>.broadcast();
   Stream<void> get onNewIncomingMessage => _incomingMessagesNotification.stream;
 
-  /// Start global listener to ingest incoming messages for current user into SQLite in real time
+  /// Global real-time listener for incoming messages & call signals in Supabase
   void startGlobalIncomingListener() {
-    _globalIncomingSub?.cancel();
     if (currentUserId.isEmpty) return;
 
-    _globalIncomingSub = _supabase
+    _incomingMsgSub?.cancel();
+    _incomingMsgSub = _supabase
         .from('messages')
         .stream(primaryKey: ['id'])
         .eq('recipient_id', currentUserId)
@@ -43,6 +46,21 @@ class ChatService {
             final chatId = item['group_id'] as String? ?? getChatId(currentUserId, senderId);
             final encryptedContent = item['encrypted_content'] as String? ?? '';
             final messageType = item['message_type'] as String? ?? 'text';
+
+            if (messageType == 'call_signal') {
+              try {
+                final signalData = jsonDecode(encryptedContent) as Map<String, dynamic>;
+                signalData['message_id'] = msgId;
+                CallService().handleIncomingCallSignal(signalData);
+                await _supabase.from('messages').delete().eq('id', item['id']);
+              } catch (_) {}
+              continue;
+            }
+
+            if (messageType == 'status_story') {
+              // Status stories are not personal chat messages
+              continue;
+            }
 
             String decryptedText;
             String? localMediaPath;
@@ -232,13 +250,10 @@ class ChatService {
         encryptedBytes = Uint8List.fromList(base64Decode(base64Data));
       } else if (payload.startsWith('AUDENC_URL:')) {
         final url = payload.substring(11);
-        final res = await HttpClient().getUrl(Uri.parse(url));
-        final response = await res.close();
-        final bytesList = <int>[];
-        await for (var chunk in response) {
-          bytesList.addAll(chunk);
+        final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          encryptedBytes = response.bodyBytes;
         }
-        encryptedBytes = Uint8List.fromList(bytesList);
       }
 
       if (encryptedBytes != null) {
