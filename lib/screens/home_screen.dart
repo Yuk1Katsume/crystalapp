@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/message_model.dart';
 import '../models/status_model.dart';
@@ -53,10 +52,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Map<String, String> _phoneContactNames = {};
   StreamSubscription? _incomingMsgSub;
+  StreamSubscription? _statusBadgeSub;
   int _unreadChatCount = 0;
   bool _hasNewStatuses = false;
   String? _myProfileAvatarUrl;
   String? _myProfileDisplayName;
+
+  late final Stream<List<GroupModel>> _myGroupsStream;
+  late final Stream<List<StatusItem>> _myStatusesStream;
+  late final Stream<List<UserStatusGroup>> _recentStatusesStream;
 
   @override
   void initState() {
@@ -69,6 +73,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       parent: _fabAnimationController,
       curve: Curves.fastOutSlowIn,
     );
+
+    // Initialize persistent broadcast streams to avoid recreating streams on every widget build
+    _myGroupsStream = _groupService.myGroups;
+    _myStatusesStream = _statusService.getMyStatusesStream();
+    _recentStatusesStream = _statusService.getRecentStatusesStream();
+
+    final currentUid = currentUser?.uid ?? '';
+    _statusBadgeSub = _recentStatusesStream.listen((contactGroups) {
+      final hasUnread = contactGroups.any((g) => g.hasUnread(currentUid));
+      if (_hasNewStatuses != hasUnread && mounted) {
+        setState(() {
+          _hasNewStatuses = hasUnread;
+        });
+      }
+    });
 
     _ensureProfileSaved();
     _loadPhoneContacts();
@@ -162,6 +181,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _statusBadgeSub?.cancel();
     _incomingCallSub?.cancel();
     _incomingMsgSub?.cancel();
     _searchController.dispose();
@@ -432,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         final favoriteIds = (snapshot.data?[2] as Set<String>?) ?? {};
 
         return StreamBuilder<List<GroupModel>>(
-          stream: _groupService.myGroups,
+          stream: _myGroupsStream,
           builder: (context, groupsSnap) {
             final groups = groupsSnap.data ?? [];
 
@@ -711,25 +731,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // TAB 1: ESTADOS (Real Data & E2EE Stories Only)
   // ==========================================
   Widget _buildStatusTab() {
-    final currentUid = currentUser?.uid ?? '';
-
     return StreamBuilder<List<StatusItem>>(
-      stream: _statusService.getMyStatusesStream(),
+      stream: _myStatusesStream,
       builder: (context, myStatusesSnap) {
         final myStatuses = myStatusesSnap.data ?? [];
 
         return StreamBuilder<List<UserStatusGroup>>(
-          stream: _statusService.getRecentStatusesStream(),
+          stream: _recentStatusesStream,
           builder: (context, contactGroupsSnap) {
             final contactGroups = contactGroupsSnap.data ?? [];
-
-            // Update badge state
-            final hasUnreadStatuses = contactGroups.any((g) => g.hasUnread(currentUid));
-            if (hasUnreadStatuses != _hasNewStatuses && mounted) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) setState(() => _hasNewStatuses = hasUnreadStatuses);
-              });
-            }
 
             return ListView(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
