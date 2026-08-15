@@ -162,10 +162,12 @@ class GroupChatService {
                 final enc = item['encrypted_content'] as String? ?? '';
                 final map = jsonDecode(enc) as Map<String, dynamic>;
                 final group = GroupModel.fromJson(map);
-                if (group.memberIds.contains(myUid)) {
-                  currentGroupsMap[group.id] = group;
-                } else {
+                if (group.memberIds.isEmpty) {
+                  // Group was deleted entirely
                   currentGroupsMap.remove(group.id);
+                } else if (currentGroupsMap.containsKey(group.id) || group.memberIds.contains(myUid)) {
+                  // Keep group visible even if user was removed so they keep their chat history until they delete it
+                  currentGroupsMap[group.id] = group;
                 }
               } catch (_) {}
             }

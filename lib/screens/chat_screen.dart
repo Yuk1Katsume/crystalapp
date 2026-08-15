@@ -250,6 +250,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   StreamSubscription? _presenceSub;
   StreamSubscription? _groupMetaSub;
   String _currentTitle = '';
+  bool _isMemberOfGroup = true;
 
   void _subscribeToPresence() {
     if (isGroup || widget.recipientId == null) return;
@@ -270,6 +271,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void _subscribeToGroupMetadata() {
     if (!isGroup || widget.groupId == null) return;
     _groupMetaSub?.cancel();
+    final myUid = currentUser?.uid ?? '';
     try {
       _groupMetaSub = SupabaseConfig.client
           .from('messages')
@@ -282,8 +284,10 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   final enc = row['encrypted_content'] as String? ?? '';
                   final map = jsonDecode(enc) as Map<String, dynamic>;
                   if (map['id'] == widget.groupId) {
+                    final members = (map['memberIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
                     if (mounted) {
                       setState(() {
+                        _isMemberOfGroup = members.contains(myUid);
                         if (map['name'] != null && map['name'].toString().isNotEmpty) {
                           _currentTitle = map['name'].toString();
                         }
@@ -449,6 +453,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       try {
         final grp = await _groupService.getGroupDetails(widget.groupId!);
         if (grp != null) {
+          final myUid = currentUser?.uid ?? '';
+          if (mounted) {
+            setState(() {
+              _isMemberOfGroup = grp.memberIds.contains(myUid);
+            });
+          }
           if (grp.iconUrl != null && grp.iconUrl!.isNotEmpty && mounted) {
             setState(() {
               _recipientAvatarUrl = grp.iconUrl;
@@ -459,6 +469,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 .from('users')
                 .select('id, username, display_name, avatar_url')
                 .filter('id', 'in', grp.memberIds);
+            _groupMembers.clear();
             for (final u in users) {
               final uid = u['id']?.toString() ?? '';
               _groupMembers[uid] = Map<String, dynamic>.from(u as Map);
@@ -843,8 +854,34 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           children: [
             Expanded(child: _buildMessageList()),
             if (_replyingToMessage != null) _buildReplyPreview(),
-            _buildInputBar(),
-            if (_isPickerVisible)
+            if (isGroup && !_isMemberOfGroup)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                margin: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E2428),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
+                    SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'No puedes enviar mensajes a este grupo porque ya no eres miembro.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              _buildInputBar(),
+            if (_isPickerVisible && (!isGroup || _isMemberOfGroup))
               SizedBox(
                 height: pickerHeight,
                 child: WhatsAppMediaPicker(
