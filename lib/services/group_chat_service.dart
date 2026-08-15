@@ -206,7 +206,30 @@ class GroupChatService {
   Future<bool> removeMemberFromGroup(String groupId, String memberId) async {
     try {
       final currentUid = _auth.currentUser?.uid ?? '';
-      final group = await getGroupDetails(groupId);
+      GroupModel? group = await getGroupDetails(groupId);
+
+      // Supabase fallback if Firestore is unavailable
+      if (group == null) {
+        try {
+          final rows = await SupabaseConfig.client
+              .from('messages')
+              .select('encrypted_content')
+              .eq('group_id', 'GLOBAL_GROUPS')
+              .eq('message_type', 'group_metadata')
+              .order('created_at', ascending: false)
+              .limit(30);
+          for (final row in rows) {
+            try {
+              final map = jsonDecode(row['encrypted_content'] as String? ?? '') as Map<String, dynamic>;
+              if (map['id'] == groupId) {
+                group = GroupModel.fromJson(map);
+                break;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       if (group == null) return false;
 
       final updatedMembers = List<String>.from(group.memberIds)..remove(memberId);
@@ -345,7 +368,30 @@ class GroupChatService {
   Future<bool> addMembersToGroup(String groupId, List<String> newMemberIds) async {
     try {
       final currentUid = _auth.currentUser?.uid ?? '';
-      final group = await getGroupDetails(groupId);
+      GroupModel? group = await getGroupDetails(groupId);
+
+      // Supabase fallback if Firestore is unavailable
+      if (group == null) {
+        try {
+          final rows = await SupabaseConfig.client
+              .from('messages')
+              .select('encrypted_content')
+              .eq('group_id', 'GLOBAL_GROUPS')
+              .eq('message_type', 'group_metadata')
+              .order('created_at', ascending: false)
+              .limit(30);
+          for (final row in rows) {
+            try {
+              final map = jsonDecode(row['encrypted_content'] as String? ?? '') as Map<String, dynamic>;
+              if (map['id'] == groupId) {
+                group = GroupModel.fromJson(map);
+                break;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       if (group == null) return false;
 
       final updatedMembers = {...group.memberIds, ...newMemberIds}.toList();
@@ -575,21 +621,47 @@ class GroupChatService {
     final now = DateTime.now();
     final msgId = const Uuid().v4();
 
+    // Embed the shared msgId into the system text so all per-member copies
+    // resolve to the same SQLite key and don't create duplicates.
+    final Map<String, dynamic> sysPayload;
+    try {
+      sysPayload = jsonDecode(systemText) as Map<String, dynamic>;
+      sysPayload['_msg_id'] = msgId;
+    } on FormatException {
+      // systemText is plain string, wrap it
+      final wrappedText = systemText; // plain strings stay as-is for sender
+      await _localDb.saveLocalMessage(
+        id: msgId,
+        senderId: currentUid,
+        recipientId: groupId,
+        groupId: groupId,
+        text: wrappedText,
+        messageType: 'system',
+        createdAt: now,
+        isRead: true,
+        status: 'sent',
+      );
+      return;
+    }
+    final enrichedText = jsonEncode(sysPayload);
+
     // 1. Save locally in SQLite (always, for the sender)
+    // Strip _msg_id from the displayed text so UI stays clean
+    final displayPayload = Map<String, dynamic>.from(sysPayload)..remove('_msg_id');
     await _localDb.saveLocalMessage(
       id: msgId,
       senderId: currentUid,
       recipientId: groupId,
       groupId: groupId,
-      text: systemText,
+      text: jsonEncode(displayPayload),
       messageType: 'system',
       createdAt: now,
       isRead: true,
       status: 'sent',
     );
 
-    // 2. Send one targeted row per member so each member's stream receives it
-    // (same pattern as sendGroupMessage for reliability)
+    // 2. Send one targeted row per member so each member's stream receives it.
+    // The row carries enrichedText (with _msg_id) so the receiver can dedup locally.
     if (memberIds != null && memberIds.isNotEmpty) {
       for (final memberId in memberIds) {
         if (memberId == currentUid) continue; // sender already has it locally
@@ -599,7 +671,7 @@ class GroupChatService {
             'recipient_id': memberId,
             'group_id': groupId,
             'message_type': 'system',
-            'encrypted_content': systemText,
+            'encrypted_content': enrichedText,
             'created_at': now.toIso8601String(),
           });
         } catch (_) {}
@@ -669,9 +741,40 @@ class GroupChatService {
     final msgId = const Uuid().v4();
     final now = DateTime.now();
 
-    // 1. Get group details to know member IDs
-    final group = await getGroupDetails(groupId);
-    final memberIds = group?.memberIds ?? [];
+    // 1. Get member IDs — try Firestore first with short timeout, then Supabase fallback
+    List<String> memberIds = [];
+    try {
+      final doc = await _firestore
+          .collection('groups')
+          .doc(groupId)
+          .get()
+          .timeout(const Duration(seconds: 3));
+      if (doc.exists && doc.data() != null) {
+        memberIds = List<String>.from(doc.data()!['memberIds'] ?? []);
+      }
+    } catch (_) {}
+
+    // Supabase fallback: scan recent GLOBAL_GROUPS metadata for this group
+    if (memberIds.isEmpty) {
+      try {
+        final rows = await SupabaseConfig.client
+            .from('messages')
+            .select('encrypted_content')
+            .eq('group_id', 'GLOBAL_GROUPS')
+            .eq('message_type', 'group_metadata')
+            .order('created_at', ascending: false)
+            .limit(30);
+        for (final row in rows) {
+          try {
+            final map = jsonDecode(row['encrypted_content'] as String? ?? '') as Map<String, dynamic>;
+            if (map['id'] == groupId) {
+              memberIds = List<String>.from(map['memberIds'] ?? []);
+              break;
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
 
     // 2. Prepare payload & E2EE encryption using shared groupId
     String messageType = type.name;
@@ -758,7 +861,11 @@ class GroupChatService {
       if (!controller.isClosed) controller.add(localMsgs);
     });
 
-    // 2. Listen to real-time incoming messages for this group in Supabase
+    // 2. Listen to real-time incoming messages for this group in Supabase.
+    // IMPORTANT: Only process rows where recipient_id == currentUid (targeted delivery)
+    // or recipient_id == 'ALL' (legacy broadcast). This prevents processing rows
+    // intended for OTHER members (which could appear if RLS is permissive), avoiding
+    // duplicate messages in the local SQLite cache.
     final subscription = SupabaseConfig.client
         .from('messages')
         .stream(primaryKey: ['id'])
@@ -771,12 +878,28 @@ class GroupChatService {
             final senderId = item['sender_id'];
             if (senderId == currentUid) continue; // Skip own messages
 
-            final msgId = item['id'].toString();
+            final recipientId = item['recipient_id']?.toString() ?? '';
+            // Only process messages addressed to me or broadcast
+            if (recipientId != currentUid && recipientId != 'ALL') continue;
+
             final encryptedContent = item['encrypted_content'] as String? ?? '';
             final messageType = item['message_type'] ?? 'text';
 
             if (messageType == 'group_metadata' || messageType == 'call_signal' || messageType == 'call_candidate') {
               continue;
+            }
+
+            // For system messages, use the shared msgId embedded in the payload
+            // so that if multiple copies exist (one per member), they all share
+            // the same SQLite key and don't create duplicates.
+            String localMsgId = item['id'].toString();
+            if (messageType == 'system') {
+              try {
+                final parsed = jsonDecode(encryptedContent) as Map<String, dynamic>;
+                if (parsed.containsKey('_msg_id')) {
+                  localMsgId = parsed['_msg_id'] as String;
+                }
+              } catch (_) {}
             }
 
             String decryptedText;
@@ -788,10 +911,10 @@ class GroupChatService {
 
             if (isImg && encryptedContent.startsWith('IMGENC:')) {
               decryptedText = '📷 Imagen';
-              localMediaPath = await ChatService().extractAndSaveEmbeddedImage(encryptedContent, msgId, groupId);
+              localMediaPath = await ChatService().extractAndSaveEmbeddedImage(encryptedContent, localMsgId, groupId);
             } else if (isAud && (encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:'))) {
               decryptedText = '🎤 Mensaje de voz';
-              localMediaPath = await ChatService().extractAndSaveEmbeddedAudio(encryptedContent, msgId, groupId);
+              localMediaPath = await ChatService().extractAndSaveEmbeddedAudio(encryptedContent, localMsgId, groupId);
               if (encryptedContent.startsWith('AUDENC_WF:')) {
                 final parts = encryptedContent.split(':');
                 if (parts.length >= 3) {
@@ -804,7 +927,18 @@ class GroupChatService {
               decryptedText = '🎨 Sticker';
               localMediaPath = E2EEService.decryptPayload(encryptedContent, groupId);
             } else {
-              decryptedText = E2EEService.decryptPayload(encryptedContent, groupId);
+              // For system messages, strip the _msg_id field before displaying
+              if (messageType == 'system') {
+                try {
+                  final parsed = jsonDecode(encryptedContent) as Map<String, dynamic>;
+                  parsed.remove('_msg_id');
+                  decryptedText = jsonEncode(parsed);
+                } catch (_) {
+                  decryptedText = encryptedContent;
+                }
+              } else {
+                decryptedText = E2EEService.decryptPayload(encryptedContent, groupId);
+              }
             }
 
             // Resolve sender name and avatar from Supabase users
@@ -823,7 +957,7 @@ class GroupChatService {
             } catch (_) {}
 
             await _localDb.saveLocalMessage(
-              id: msgId,
+              id: localMsgId,
               senderId: senderId,
               senderName: senderName,
               senderAvatar: senderAvatar,
@@ -838,12 +972,10 @@ class GroupChatService {
               status: 'delivered',
             );
 
-            // Delete targeted row if explicitly addressed to current user
-            if (item['recipient_id'] == currentUid) {
-              try {
-                await SupabaseConfig.client.from('messages').delete().eq('id', item['id']);
-              } catch (_) {}
-            }
+            // Always delete the targeted row once processed
+            try {
+              await SupabaseConfig.client.from('messages').delete().eq('id', item['id']);
+            } catch (_) {}
 
             hasNewIncoming = true;
           }
