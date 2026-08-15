@@ -1,0 +1,13 @@
+{
+  "metadataGeneration": {
+    "branchName": {
+      "instructions": "Usa el estándar: feat/nombre-corto, fix/nombre-corto o refactor/nombre-corto en minúsculas y separado por guiones."
+    },
+    "commitMessage": {
+      "instructions": "Sigue Conventional Commits (feat:, fix:, docs:, refactor:, test:) con descripciones claras, concisas y en imperativo."
+    },
+    "pullRequest": {
+      "instructions": "Genera un resumen en un párrafo con los cambios clave, lista de archivos modificados y una sección breve de pasos de prueba."
+    }
+  }
+}
