@@ -33,8 +33,9 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
   final CallService _callService = CallService();
   final AudioPlayer _soundPlayer = AudioPlayer();
   final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-  final String _currentName = FirebaseAuth.instance.currentUser?.displayName ?? 'Usuario';
-  final String? _currentAvatar = FirebaseAuth.instance.currentUser?.photoURL;
+
+  late String _resolvedUserName;
+  String? _resolvedUserAvatar;
 
   bool _isConnected = false;
   bool _isMuted = false;
@@ -50,6 +51,11 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
 
+    _resolvedUserName = widget.otherUserName.isNotEmpty && widget.otherUserName != 'Contacto' && widget.otherUserName != 'Usuario'
+        ? widget.otherUserName
+        : 'Contacto';
+    _resolvedUserAvatar = widget.otherUserAvatar;
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
@@ -59,8 +65,30 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _playOutgoingDialToneIfOutgoing();
+    // If incoming call was answered, the call is ALREADY connected!
+    if (!widget.isOutgoing) {
+      _isConnected = true;
+      _startTimer();
+    } else {
+      _playOutgoingDialToneIfOutgoing();
+    }
+
     _listenToCallSignals();
+    _resolveProfile();
+  }
+
+  void _resolveProfile() async {
+    final profile = await _callService.resolveUserProfile(widget.otherUserId);
+    if (mounted) {
+      setState(() {
+        if (profile['name'] != null && profile['name'] != 'Contacto' && profile['name'] != 'Usuario') {
+          _resolvedUserName = profile['name']!;
+        }
+        if (profile['avatar'] != null && profile['avatar']!.isNotEmpty) {
+          _resolvedUserAvatar = profile['avatar'];
+        }
+      });
+    }
   }
 
   void _playOutgoingDialToneIfOutgoing() async {
@@ -78,10 +106,12 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
 
       if (status == 'connected' && !_isConnected) {
         await _soundPlayer.stop();
-        setState(() {
-          _isConnected = true;
-        });
-        _startTimer();
+        if (mounted) {
+          setState(() {
+            _isConnected = true;
+          });
+          _startTimer();
+        }
       } else if (status == 'ended' || status == 'rejected') {
         _onCallEndedByRemote();
       }
@@ -128,14 +158,16 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
 
     await CallNotificationService().cancelCallNotification(widget.callId.hashCode);
 
+    final myProf = await _callService.getMyProfile();
+
     await _callService.endCall(
       callId: widget.callId,
       callerId: widget.isOutgoing ? _currentUid : widget.otherUserId,
-      callerName: widget.isOutgoing ? _currentName : widget.otherUserName,
-      callerAvatar: widget.isOutgoing ? _currentAvatar : widget.otherUserAvatar,
+      callerName: widget.isOutgoing ? (myProf['name'] ?? 'Usuario') : _resolvedUserName,
+      callerAvatar: widget.isOutgoing ? myProf['avatar'] : _resolvedUserAvatar,
       receiverId: widget.isOutgoing ? widget.otherUserId : _currentUid,
-      receiverName: widget.isOutgoing ? widget.otherUserName : _currentName,
-      receiverAvatar: widget.isOutgoing ? widget.otherUserAvatar : _currentAvatar,
+      receiverName: widget.isOutgoing ? _resolvedUserName : (myProf['name'] ?? 'Usuario'),
+      receiverAvatar: widget.isOutgoing ? _resolvedUserAvatar : myProf['avatar'],
       direction: widget.isOutgoing ? CallDirection.outgoing : CallDirection.incoming,
       durationSeconds: _callDuration,
       isVideo: widget.isVideo,
@@ -187,6 +219,10 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
         ? _formatDuration(_callDuration)
         : (widget.isOutgoing ? 'Llamando...' : 'Conectando audio E2EE...');
 
+    final initialLetter = _resolvedUserName.isNotEmpty && _resolvedUserName != 'Contacto'
+        ? _resolvedUserName[0].toUpperCase()
+        : 'U';
+
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
       body: SafeArea(
@@ -231,13 +267,27 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
                       child: CircleAvatar(
                         radius: 65,
                         backgroundColor: const Color(0xFF1E1E1E),
-                        backgroundImage: (widget.otherUserAvatar != null && widget.otherUserAvatar!.isNotEmpty && widget.otherUserAvatar!.startsWith('http'))
-                            ? NetworkImage(widget.otherUserAvatar!)
+                        backgroundImage: (_resolvedUserAvatar != null && _resolvedUserAvatar!.isNotEmpty && _resolvedUserAvatar!.startsWith('http'))
+                            ? NetworkImage(_resolvedUserAvatar!)
                             : null,
-                        child: (widget.otherUserAvatar == null || !widget.otherUserAvatar!.startsWith('http'))
-                            ? Text(
-                                widget.otherUserName.isNotEmpty ? widget.otherUserName[0].toUpperCase() : '🌸',
-                                style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold),
+                        child: (_resolvedUserAvatar == null || !_resolvedUserAvatar!.startsWith('http'))
+                            ? Container(
+                                width: 130,
+                                height: 130,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: LinearGradient(
+                                    colors: [Color(0xFF2A2A2A), Color(0xFF141414)],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    initialLetter,
+                                    style: const TextStyle(color: Color(0xFFFF1744), fontSize: 48, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
                               )
                             : null,
                       ),
@@ -251,7 +301,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
 
             // User Name
             Text(
-              widget.otherUserName,
+              _resolvedUserName,
               style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
             ),
 
@@ -283,35 +333,39 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
                     onTap: _toggleMute,
                   ),
 
-                  // End Call (Hang up)
+                  // Hangup Button (Red)
                   GestureDetector(
                     onTap: _hangup,
                     child: Container(
-                      width: 68,
-                      height: 68,
+                      width: 72,
+                      height: 72,
                       decoration: const BoxDecoration(
                         color: Color(0xFFE53935),
                         shape: BoxShape.circle,
                         boxShadow: [
-                          BoxShadow(color: Color(0x66E53935), blurRadius: 18, spreadRadius: 2),
+                          BoxShadow(
+                            color: Color(0x66E53935),
+                            blurRadius: 18,
+                            spreadRadius: 2,
+                            offset: Offset(0, 4),
+                          ),
                         ],
                       ),
-                      child: const Center(
-                        child: Icon(Icons.call_end_rounded, color: Colors.white, size: 34),
-                      ),
+                      child: const Icon(Icons.call_end_rounded, color: Colors.white, size: 36),
                     ),
                   ),
 
-                  // Speaker
+                  // Speakerphone
                   _buildActionButton(
                     icon: _isSpeaker ? Icons.volume_up_rounded : Icons.volume_down_rounded,
-                    label: 'Altavoz',
+                    label: _isSpeaker ? 'Altavoz ON' : 'Altavoz',
                     isActive: _isSpeaker,
                     onTap: _toggleSpeaker,
                   ),
                 ],
               ),
             ),
+            const SizedBox(height: 16),
           ],
         ),
       ),
@@ -324,32 +378,39 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
     required bool isActive,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 52,
-            height: 52,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
               color: isActive ? Colors.white : const Color(0xFF1E1E1E),
               shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF333333)),
+              border: Border.all(
+                color: isActive ? Colors.transparent : Colors.white12,
+                width: 1,
+              ),
             ),
             child: Icon(
               icon,
-              color: isActive ? Colors.black : Colors.white,
-              size: 24,
+              color: isActive ? const Color(0xFF0A0A0A) : Colors.white70,
+              size: 26,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.white : Colors.white54,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -954,7 +954,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           : null,
                       child: (effectiveAvatarUrl == null || effectiveAvatarUrl.isEmpty)
                           ? Text(
-                              displayName.isNotEmpty ? displayName[0].toUpperCase() : '🌸',
+                              displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U',
                               style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                             )
                           : null,
@@ -1016,7 +1016,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               : null,
                           child: (effectiveAvatarUrl == null || effectiveAvatarUrl.isEmpty)
                               ? Text(
-                                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '🌸',
+                                  displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U',
                                   style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                                 )
                               : null,
@@ -1352,6 +1352,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   directionColor = Colors.white70;
                 }
 
+                final resolvedName = _phoneContactNames[log.otherUserId] ??
+                    (log.otherUserName.isNotEmpty && log.otherUserName != 'Contacto' && log.otherUserName != 'Usuario'
+                        ? log.otherUserName
+                        : 'Contacto');
+                final initial = resolvedName.isNotEmpty && resolvedName != 'Contacto'
+                    ? resolvedName[0].toUpperCase()
+                    : 'C';
+
                 return ListTile(
                   contentPadding: const EdgeInsets.symmetric(vertical: 4),
                   leading: CircleAvatar(
@@ -1361,14 +1369,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ? NetworkImage(log.otherUserAvatar!)
                         : null,
                     child: (log.otherUserAvatar == null || !log.otherUserAvatar!.startsWith('http'))
-                        ? Text(
-                            log.otherUserName.isNotEmpty ? log.otherUserName[0].toUpperCase() : '🌸',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                        ? Container(
+                            width: 48,
+                            height: 48,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                colors: [Color(0xFF2E2E2E), Color(0xFF1A1A1A)],
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                initial,
+                                style: const TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                            ),
                           )
                         : null,
                   ),
                   title: Text(
-                    log.otherUserName,
+                    resolvedName,
                     style: TextStyle(
                       color: isMissed ? const Color(0xFFFF1744) : Colors.white,
                       fontWeight: FontWeight.bold,

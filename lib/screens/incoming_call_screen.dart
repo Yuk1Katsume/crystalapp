@@ -30,12 +30,20 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
   final AudioPlayer _ringtonePlayer = AudioPlayer();
   StreamSubscription? _callSignalSub;
 
+  late String _resolvedCallerName;
+  String? _resolvedCallerAvatar;
+
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
 
   @override
   void initState() {
     super.initState();
+
+    _resolvedCallerName = widget.callerName.isNotEmpty && widget.callerName != 'Contacto' && widget.callerName != 'Usuario'
+        ? widget.callerName
+        : 'Contacto';
+    _resolvedCallerAvatar = widget.callerAvatar;
 
     _pulseController = AnimationController(
       vsync: this,
@@ -48,6 +56,21 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
 
     _playRingtone();
     _listenToCallStatus();
+    _resolveCallerProfile();
+  }
+
+  void _resolveCallerProfile() async {
+    final profile = await _callService.resolveUserProfile(widget.callerId);
+    if (mounted) {
+      setState(() {
+        if (profile['name'] != null && profile['name'] != 'Contacto' && profile['name'] != 'Usuario') {
+          _resolvedCallerName = profile['name']!;
+        }
+        if (profile['avatar'] != null && profile['avatar']!.isNotEmpty) {
+          _resolvedCallerAvatar = profile['avatar'];
+        }
+      });
+    }
   }
 
   void _playRingtone() async {
@@ -87,8 +110,8 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
           builder: (_) => CallScreen(
             callId: widget.callId,
             otherUserId: widget.callerId,
-            otherUserName: widget.callerName,
-            otherUserAvatar: widget.callerAvatar,
+            otherUserName: _resolvedCallerName,
+            otherUserAvatar: _resolvedCallerAvatar,
             isOutgoing: false,
             isVideo: widget.isVideo,
           ),
@@ -101,14 +124,16 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
     await _ringtonePlayer.stop();
     await CallNotificationService().cancelCallNotification(widget.callId.hashCode);
 
+    final myProf = await _callService.getMyProfile();
+
     await _callService.rejectCall(
       callId: widget.callId,
       callerId: widget.callerId,
-      callerName: widget.callerName,
-      callerAvatar: widget.callerAvatar,
+      callerName: _resolvedCallerName,
+      callerAvatar: _resolvedCallerAvatar,
       receiverId: _callService.currentUserId,
-      receiverName: _callService.currentUserName,
-      receiverAvatar: _callService.currentUserAvatar,
+      receiverName: myProf['name'] ?? 'Usuario',
+      receiverAvatar: myProf['avatar'],
       isVideo: widget.isVideo,
     );
 
@@ -127,6 +152,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
 
   @override
   Widget build(BuildContext context) {
+    final initialLetter = _resolvedCallerName.isNotEmpty && _resolvedCallerName != 'Contacto'
+        ? _resolvedCallerName[0].toUpperCase()
+        : 'C';
+
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
       body: SafeArea(
@@ -177,13 +206,27 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
                       child: CircleAvatar(
                         radius: 65,
                         backgroundColor: const Color(0xFF1E1E1E),
-                        backgroundImage: (widget.callerAvatar != null && widget.callerAvatar!.startsWith('http'))
-                            ? NetworkImage(widget.callerAvatar!)
+                        backgroundImage: (_resolvedCallerAvatar != null && _resolvedCallerAvatar!.isNotEmpty && _resolvedCallerAvatar!.startsWith('http'))
+                            ? NetworkImage(_resolvedCallerAvatar!)
                             : null,
-                        child: (widget.callerAvatar == null || !widget.callerAvatar!.startsWith('http'))
-                            ? Text(
-                                widget.callerName.isNotEmpty ? widget.callerName[0].toUpperCase() : '🌸',
-                                style: const TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.bold),
+                        child: (_resolvedCallerAvatar == null || !_resolvedCallerAvatar!.startsWith('http'))
+                            ? Container(
+                                width: 130,
+                                height: 130,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: LinearGradient(
+                                    colors: [Color(0xFF2A2A2A), Color(0xFF141414)],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    initialLetter,
+                                    style: const TextStyle(color: Color(0xFFFF1744), fontSize: 44, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
                               )
                             : null,
                       ),
@@ -196,7 +239,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
 
               // Caller Name
               Text(
-                widget.callerName,
+                _resolvedCallerName,
                 style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
@@ -223,19 +266,24 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
                           width: 72,
                           height: 72,
                           decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
                             color: Color(0xFFE53935),
+                            shape: BoxShape.circle,
                             boxShadow: [
-                              BoxShadow(color: Color(0x66E53935), blurRadius: 20, spreadRadius: 2),
+                              BoxShadow(
+                                color: Color(0x55E53935),
+                                blurRadius: 16,
+                                spreadRadius: 2,
+                                offset: Offset(0, 4),
+                              ),
                             ],
                           ),
                           child: const Icon(Icons.call_end_rounded, color: Colors.white, size: 36),
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       const Text(
                         'Rechazar',
-                        style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                        style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
                       ),
                     ],
                   ),
@@ -250,25 +298,29 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
                           width: 72,
                           height: 72,
                           decoration: const BoxDecoration(
+                            color: Color(0xFF00E676),
                             shape: BoxShape.circle,
-                            color: Color(0xFF00C853),
                             boxShadow: [
-                              BoxShadow(color: Color(0x6600C853), blurRadius: 20, spreadRadius: 2),
+                              BoxShadow(
+                                color: Color(0x5500E676),
+                                blurRadius: 16,
+                                spreadRadius: 2,
+                                offset: Offset(0, 4),
+                              ),
                             ],
                           ),
-                          child: const Icon(Icons.call_rounded, color: Colors.white, size: 36),
+                          child: const Icon(Icons.call_rounded, color: Colors.black, size: 36),
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       const Text(
-                        'Aceptar',
-                        style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                        'Contestar',
+                        style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
                       ),
                     ],
                   ),
                 ],
               ),
-
               const SizedBox(height: 20),
             ],
           ),

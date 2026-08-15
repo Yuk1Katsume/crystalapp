@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/call_model.dart';
 import 'local_database_service.dart';
@@ -28,6 +29,8 @@ class CallService {
 
   StreamSubscription? _firestoreIncomingSub;
   StreamSubscription? _supabaseIncomingSub;
+  StreamSubscription? _supabaseCandSub;
+  StreamSubscription? _firestoreCandSub;
   Timer? _pollingTimer;
 
   final StreamController<Map<String, dynamic>> _incomingCallController =
@@ -39,9 +42,6 @@ class CallService {
   final Set<String> _activeRingingCallIds = {};
 
   String get currentUserId => _auth.currentUser?.uid ?? '';
-  String get currentUserName =>
-      _auth.currentUser?.displayName ?? _auth.currentUser?.phoneNumber ?? 'Usuario';
-  String? get currentUserAvatar => _auth.currentUser?.photoURL;
 
   // WebRTC Session
   RTCPeerConnection? _peerConnection;
@@ -58,6 +58,70 @@ class CallService {
       {'urls': 'stun:stun2.l.google.com:19302'},
     ],
   };
+
+  /// Asynchronously resolves current logged in user's profile
+  Future<Map<String, String?>> getMyProfile() async {
+    final uid = currentUserId;
+    if (uid.isEmpty) return {'name': 'Usuario', 'avatar': null};
+
+    String? name;
+    String? avatar;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      name = prefs.getString('current_display_name') ?? prefs.getString('current_username');
+      avatar = prefs.getString('current_avatar_url');
+    } catch (_) {}
+
+    if (name == null || name.isEmpty || avatar == null || avatar.isEmpty) {
+      try {
+        final res = await SupabaseConfig.client
+            .from('users')
+            .select('display_name, username, avatar_url')
+            .eq('id', uid)
+            .maybeSingle();
+        if (res != null) {
+          final dName = res['display_name']?.toString();
+          final uName = res['username']?.toString();
+          final av = res['avatar_url']?.toString();
+          if (dName != null && dName.isNotEmpty) name = dName;
+          else if (uName != null && uName.isNotEmpty) name = uName;
+          if (av != null && av.isNotEmpty) avatar = av;
+        }
+      } catch (_) {}
+    }
+
+    final fallbackPhone = _auth.currentUser?.phoneNumber ?? 'Usuario';
+    return {
+      'name': (name != null && name.isNotEmpty) ? name : fallbackPhone,
+      'avatar': avatar,
+    };
+  }
+
+  /// Asynchronously resolves any user's profile by UID
+  Future<Map<String, String?>> resolveUserProfile(String uid) async {
+    if (uid.isEmpty) return {'name': 'Contacto', 'avatar': null};
+
+    try {
+      final res = await SupabaseConfig.client
+          .from('users')
+          .select('display_name, username, avatar_url')
+          .eq('id', uid)
+          .maybeSingle();
+
+      if (res != null) {
+        final dName = res['display_name']?.toString();
+        final uName = res['username']?.toString();
+        final avatar = res['avatar_url']?.toString();
+        final bestName = (dName != null && dName.isNotEmpty)
+            ? dName
+            : ((uName != null && uName.isNotEmpty) ? uName : 'Contacto');
+        return {'name': bestName, 'avatar': avatar};
+      }
+    } catch (_) {}
+
+    return {'name': 'Contacto', 'avatar': null};
+  }
 
   /// Start listening for incoming call signals across Supabase Realtime + Firestore
   void startIncomingCallListener() {
@@ -119,10 +183,23 @@ class CallService {
     if (callId.isEmpty) return;
 
     final status = (data['status'] ?? 'ringing').toString();
-    final callerName = (data['caller_name'] ?? 'Contacto').toString();
+    var callerName = (data['caller_name'] ?? '').toString();
     final callerId = (data['caller_id'] ?? '').toString();
-    final callerAvatar = data['caller_avatar'] as String?;
+    var callerAvatar = data['caller_avatar'] as String?;
     final isVideo = data['is_video'] == true;
+
+    // Resolve profile if callerName is generic or avatar is missing
+    if (callerName.isEmpty || callerName == 'Usuario' || callerName == 'Contacto' || callerAvatar == null) {
+      final profile = await resolveUserProfile(callerId);
+      if (profile['name'] != null && profile['name'] != 'Contacto') {
+        callerName = profile['name']!;
+      }
+      if (profile['avatar'] != null) {
+        callerAvatar = profile['avatar'];
+      }
+      data['caller_name'] = callerName.isNotEmpty ? callerName : 'Contacto';
+      data['caller_avatar'] = callerAvatar;
+    }
 
     if (status == 'ringing') {
       if (!_activeRingingCallIds.contains(callId)) {
@@ -131,7 +208,7 @@ class CallService {
         // Show Heads-Up Notification & Trigger Stream
         await _notificationService.showIncomingCallNotification(
           notificationId: callId.hashCode,
-          callerName: callerName,
+          callerName: callerName.isNotEmpty ? callerName : 'Contacto',
           isVideo: isVideo,
           callId: callId,
         );
@@ -145,14 +222,15 @@ class CallService {
 
         if (!_processedCallIds.contains(callId)) {
           _processedCallIds.add(callId);
+          final myProf = await getMyProfile();
           final log = CallLog(
             id: callId,
             callerId: callerId,
-            callerName: callerName,
+            callerName: callerName.isNotEmpty ? callerName : 'Contacto',
             callerAvatar: callerAvatar,
             receiverId: currentUserId,
-            receiverName: currentUserName,
-            receiverAvatar: currentUserAvatar,
+            receiverName: myProf['name'] ?? 'Usuario',
+            receiverAvatar: myProf['avatar'],
             direction: CallDirection.incoming,
             status: CallStatus.missed,
             durationSeconds: 0,
@@ -198,14 +276,27 @@ class CallService {
     bool isVideo = false,
   }) async {
     final myUid = currentUserId;
-    final myName = currentUserName;
-    final myAvatar = currentUserAvatar;
+    final myProfile = await getMyProfile();
+    final myName = myProfile['name'] ?? 'Usuario';
+    final myAvatar = myProfile['avatar'];
     final callId = _uuid.v4();
+
+    var finalReceiverName = receiverName;
+    var finalReceiverAvatar = receiverAvatar;
+    if (finalReceiverName.isEmpty || finalReceiverName == 'Contacto' || finalReceiverAvatar == null) {
+      final rProf = await resolveUserProfile(receiverId);
+      if (rProf['name'] != null && rProf['name'] != 'Contacto') {
+        finalReceiverName = rProf['name']!;
+      }
+      if (rProf['avatar'] != null) {
+        finalReceiverAvatar = rProf['avatar'];
+      }
+    }
 
     // 1. Initialize WebRTC Media & Peer Connection
     RTCSessionDescription? offer;
     try {
-      await _initWebRTC(isVideo: isVideo, isCaller: true, callId: callId);
+      await _initWebRTC(isVideo: isVideo, isCaller: true, callId: callId, otherUid: receiverId);
       offer = await _peerConnection?.createOffer({
         'mandatory': {
           'OfferToReceiveAudio': true,
@@ -224,8 +315,8 @@ class CallService {
       'caller_name': myName,
       'caller_avatar': myAvatar,
       'receiver_id': receiverId,
-      'receiver_name': receiverName,
-      'receiver_avatar': receiverAvatar,
+      'receiver_name': finalReceiverName,
+      'receiver_avatar': finalReceiverAvatar,
       'status': 'ringing',
       'is_video': isVideo,
       'sdp_offer': offer?.toMap(),
@@ -321,7 +412,7 @@ class CallService {
       final callerId = (data?['caller_id'] ?? '').toString();
 
       // 2. Initialize WebRTC
-      await _initWebRTC(isVideo: isVideo, isCaller: false, callId: callId);
+      await _initWebRTC(isVideo: isVideo, isCaller: false, callId: callId, otherUid: callerId);
 
       // 3. Set Remote Description
       if (offerMap != null) {
@@ -408,14 +499,17 @@ class CallService {
 
     _cleanupWebRTC();
 
+    final pCaller = await resolveUserProfile(callerId);
+    final pReceiver = await getMyProfile();
+
     final log = CallLog(
       id: callId,
       callerId: callerId,
-      callerName: callerName,
-      callerAvatar: callerAvatar,
+      callerName: (callerName.isNotEmpty && callerName != 'Contacto') ? callerName : (pCaller['name'] ?? 'Contacto'),
+      callerAvatar: callerAvatar ?? pCaller['avatar'],
       receiverId: receiverId,
-      receiverName: receiverName,
-      receiverAvatar: receiverAvatar,
+      receiverName: (receiverName.isNotEmpty && receiverName != 'Usuario') ? receiverName : (pReceiver['name'] ?? 'Usuario'),
+      receiverAvatar: receiverAvatar ?? pReceiver['avatar'],
       direction: CallDirection.incoming,
       status: CallStatus.rejected,
       durationSeconds: 0,
@@ -468,14 +562,31 @@ class CallService {
 
     _cleanupWebRTC();
 
+    var finalCallerName = callerName;
+    var finalCallerAvatar = callerAvatar;
+    var finalReceiverName = receiverName;
+    var finalReceiverAvatar = receiverAvatar;
+
+    if (finalCallerName.isEmpty || finalCallerName == 'Contacto' || finalCallerName == 'Usuario') {
+      final cProf = await resolveUserProfile(callerId);
+      finalCallerName = cProf['name'] ?? 'Contacto';
+      finalCallerAvatar ??= cProf['avatar'];
+    }
+
+    if (finalReceiverName.isEmpty || finalReceiverName == 'Contacto' || finalReceiverName == 'Usuario') {
+      final rProf = await resolveUserProfile(receiverId);
+      finalReceiverName = rProf['name'] ?? 'Contacto';
+      finalReceiverAvatar ??= rProf['avatar'];
+    }
+
     final log = CallLog(
       id: callId,
       callerId: callerId,
-      callerName: callerName,
-      callerAvatar: callerAvatar,
+      callerName: finalCallerName,
+      callerAvatar: finalCallerAvatar,
       receiverId: receiverId,
-      receiverName: receiverName,
-      receiverAvatar: receiverAvatar,
+      receiverName: finalReceiverName,
+      receiverAvatar: finalReceiverAvatar,
       direction: direction,
       status: durationSeconds > 0 ? CallStatus.completed : CallStatus.missed,
       durationSeconds: durationSeconds,
@@ -486,11 +597,12 @@ class CallService {
     await _localDb.saveCallLog(log);
   }
 
-  /// Initialize WebRTC Peer Connection & Media Streams
+  /// Initialize WebRTC Peer Connection & Media Streams with Dual Relay Candidate Exchange
   Future<void> _initWebRTC({
     required bool isVideo,
     required bool isCaller,
     required String callId,
+    required String otherUid,
   }) async {
     try {
       final mediaConstraints = {
@@ -515,18 +627,61 @@ class CallService {
         }
       };
 
-      _peerConnection?.onIceCandidate = (candidate) {
+      _peerConnection?.onIceCandidate = (candidate) async {
         if (candidate.candidate != null) {
           final candMap = candidate.toMap();
-          _firestore
-              .collection('call_signals')
-              .doc(callId)
-              .collection('candidates')
-              .add(candMap);
+
+          // 1. Send candidate via Supabase messages relay
+          if (otherUid.isNotEmpty) {
+            try {
+              await SupabaseConfig.client.from('messages').insert({
+                'sender_id': currentUserId,
+                'recipient_id': otherUid,
+                'group_id': 'CALL_${callId}_CAND',
+                'message_type': 'call_candidate',
+                'encrypted_content': jsonEncode(candMap),
+                'created_at': DateTime.now().toIso8601String(),
+              });
+            } catch (_) {}
+          }
+
+          // 2. Send candidate via Firestore
+          try {
+            await _firestore
+                .collection('call_signals')
+                .doc(callId)
+                .collection('candidates')
+                .add(candMap);
+          } catch (_) {}
         }
       };
 
-      _firestore
+      // Listen for ICE Candidates via Supabase
+      _supabaseCandSub?.cancel();
+      _supabaseCandSub = SupabaseConfig.client
+          .from('messages')
+          .stream(primaryKey: ['id'])
+          .eq('group_id', 'CALL_${callId}_CAND')
+          .listen((data) {
+            for (final row in data) {
+              if (row['sender_id'] != currentUserId) {
+                try {
+                  final candData = jsonDecode(row['encrypted_content'] as String) as Map<String, dynamic>;
+                  final cand = RTCIceCandidate(
+                    candData['candidate'],
+                    candData['sdpMid'],
+                    candData['sdpMLineIndex'],
+                  );
+                  _peerConnection?.addCandidate(cand);
+                  SupabaseConfig.client.from('messages').delete().eq('id', row['id']).then((_) {}).catchError((_) {});
+                } catch (_) {}
+              }
+            }
+          }, onError: (_) {});
+
+      // Listen for ICE Candidates via Firestore
+      _firestoreCandSub?.cancel();
+      _firestoreCandSub = _firestore
           .collection('call_signals')
           .doc(callId)
           .collection('candidates')
@@ -545,12 +700,15 @@ class CallService {
             }
           }
         }
-      });
+      }, onError: (_) {});
     } catch (_) {}
   }
 
   void _cleanupWebRTC() {
     try {
+      _supabaseCandSub?.cancel();
+      _firestoreCandSub?.cancel();
+
       _localStream?.getTracks().forEach((track) {
         track.stop();
       });
