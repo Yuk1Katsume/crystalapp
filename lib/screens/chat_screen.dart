@@ -538,10 +538,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             });
           }
           if (grp.memberIds.isNotEmpty) {
+            final inFilter = '(${grp.memberIds.map((id) => '"$id"').join(",")})';
             final List<dynamic> users = await SupabaseConfig.client
                 .from('users')
                 .select('id, username, display_name, avatar_url')
-                .filter('id', 'in', grp.memberIds);
+                .filter('id', 'in', inFilter);
             _groupMembers.clear();
             for (final u in users) {
               final uid = u['id']?.toString() ?? '';

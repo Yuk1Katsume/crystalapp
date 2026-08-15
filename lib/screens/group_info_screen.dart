@@ -130,10 +130,11 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
       return;
     }
     try {
+      final inFilter = '(${memberIds.map((id) => '"$id"').join(",")})';
       final List<dynamic> users = await SupabaseConfig.client
           .from('users')
           .select('id, username, display_name, phone, avatar_url, is_online')
-          .filter('id', 'in', memberIds);
+          .filter('id', 'in', inFilter);
 
       final List<Map<String, dynamic>> resolvedMembers = [];
       for (final u in users) {
@@ -176,10 +177,11 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
       // 1. Load member profile data from Supabase
       if (_memberIds.isNotEmpty) {
         try {
+          final inFilter = '(${_memberIds.map((id) => '"$id"').join(",")})';
           final List<dynamic> users = await SupabaseConfig.client
               .from('users')
               .select('id, username, display_name, phone, avatar_url, is_online')
-              .filter('id', 'in', _memberIds);
+              .filter('id', 'in', inFilter);
 
           final List<Map<String, dynamic>> resolvedMembers = [];
           for (final u in users) {

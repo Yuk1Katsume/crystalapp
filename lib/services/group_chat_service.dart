@@ -285,10 +285,12 @@ class GroupChatService {
         String actorName = 'Un admin';
         String targetName = 'un usuario';
 
+        final filterIds = [currentUid, memberId];
+        final inFilter = '(${filterIds.map((id) => '"$id"').join(",")})';
         final users = await SupabaseConfig.client
             .from('users')
             .select('id, display_name, username')
-            .filter('id', 'in', [currentUid, memberId]);
+            .filter('id', 'in', inFilter);
 
         for (var u in users) {
           final uid = u['id']?.toString();
@@ -364,10 +366,12 @@ class GroupChatService {
       // 3. Send system message in chat
       try {
         String actorName = 'Un admin';
+        final filterIds = [currentUid, ...newMemberIds];
+        final inFilter = '(${filterIds.map((id) => '"$id"').join(",")})';
         final users = await SupabaseConfig.client
             .from('users')
             .select('id, display_name, username')
-            .filter('id', 'in', [currentUid, ...newMemberIds]);
+            .filter('id', 'in', inFilter);
 
         final Map<String, String> nameMap = {};
         for (var u in users) {
