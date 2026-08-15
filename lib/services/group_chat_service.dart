@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message_model.dart';
 import 'chat_service.dart';
@@ -454,7 +455,12 @@ class GroupChatService {
 
       await SupabaseConfig.client.storage
           .from('avatars')
-          .uploadBinary(fileName, bytes);
+          .uploadBinary(
+            fileName,
+            bytes,
+            fileOptions: const FileOptions(upsert: true),
+          )
+          .timeout(const Duration(seconds: 10));
 
       final publicUrl = SupabaseConfig.client.storage
           .from('avatars')
@@ -564,18 +570,6 @@ class GroupChatService {
         });
       } catch (_) {}
     }
-
-    // 5. Also send 1 row for real-time group stream listeners
-    try {
-      await SupabaseConfig.client.from('messages').insert({
-        'sender_id': currentUid,
-        'recipient_id': 'GROUP_$groupId',
-        'group_id': groupId,
-        'message_type': messageType,
-        'encrypted_content': encryptedContent,
-        'created_at': now.toIso8601String(),
-      });
-    } catch (_) {}
   }
 
   /// Stream group messages from local SQLite + real-time Supabase

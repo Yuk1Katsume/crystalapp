@@ -293,9 +293,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  void _markConversationAsRead() {
+  void _markConversationAsRead() async {
     final chatId = isGroup ? widget.groupId! : _chatService.getChatId(_chatService.currentUserId, widget.recipientId ?? '');
-    LocalDatabaseService().markMessagesAsRead(chatId);
+    await LocalDatabaseService().markMessagesAsRead(chatId);
+    if (!isGroup && widget.recipientId != null && widget.recipientId!.isNotEmpty) {
+      await LocalDatabaseService().markMessagesAsRead(widget.recipientId!);
+    }
   }
 
   void _subscribeToMessages() {

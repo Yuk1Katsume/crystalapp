@@ -105,26 +105,45 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   }
 
   Future<void> _pickAndChangeGroupIcon() async {
-    final picked = await _groupService.pickImage();
-    if (picked == null) return;
+    try {
+      final picked = await _groupService.pickImage();
+      if (picked == null) return;
 
-    setState(() => _isUploadingIcon = true);
+      setState(() => _isUploadingIcon = true);
 
-    final oldIcon = _groupIconUrl;
-    final url = await _groupService.uploadGroupIcon(widget.groupId, File(picked.path), oldIconUrl: oldIcon);
-    if (url != null && mounted) {
-      setState(() {
-        _groupIconUrl = url;
-        _isUploadingIcon = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF1E1E1E),
-          content: Text('Foto del grupo actualizada con éxito ✨', style: TextStyle(color: Colors.white)),
-        ),
-      );
-    } else if (mounted) {
-      setState(() => _isUploadingIcon = false);
+      final oldIcon = _groupIconUrl;
+      final url = await _groupService.uploadGroupIcon(widget.groupId, File(picked.path), oldIconUrl: oldIcon);
+      if (url != null && mounted) {
+        setState(() {
+          _groupIconUrl = url;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF1E1E1E),
+            content: Text('Foto del grupo actualizada con éxito ✨', style: TextStyle(color: Colors.white)),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF1E1E1E),
+            content: Text('No se pudo subir la foto del grupo. Comprueba tu conexión.', style: TextStyle(color: Colors.white)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1E1E1E),
+            content: Text('Error al cambiar la foto: $e', style: const TextStyle(color: Colors.white)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingIcon = false);
+      }
     }
   }
 

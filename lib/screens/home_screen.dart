@@ -500,7 +500,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
                 // Apply selected tab filter
                 if (_selectedFilter == 'No leídos') {
-                  filteredUsers = filteredUsers.where((u) => unreadIds.contains(u['id'])).toList();
+                  filteredUsers = filteredUsers.where((u) {
+                    final uid = u['id']?.toString() ?? '';
+                    final cid = _chatService.getChatId(myUid, uid);
+                    return unreadIds.contains(uid) || unreadIds.contains(cid);
+                  }).toList();
                   filteredGroups = filteredGroups.where((g) => unreadIds.contains(g.id)).toList();
 
                   if (filteredUsers.isEmpty && filteredGroups.isEmpty) {
