@@ -250,10 +250,10 @@ class GroupChatService {
       }
 
       // 1. Update Firestore
-      _firestore.collection('groups').doc(groupId).update({
+      await _firestore.collection('groups').doc(groupId).update({
         'memberIds': updatedMembers,
         'adminId': newAdminId,
-      }).timeout(const Duration(seconds: 4)).catchError((_) {});
+      }).timeout(const Duration(seconds: 4));
 
       // 2. Broadcast updated group to Supabase
       final updatedGroup = GroupModel(
@@ -264,6 +264,9 @@ class GroupChatService {
         memberIds: updatedMembers,
         adminId: newAdminId,
         createdAt: group.createdAt,
+        wallpaperColor: group.wallpaperColor,
+        wallpaperImage: group.wallpaperImage,
+        wallpaperOpacity: group.wallpaperOpacity,
       );
 
       try {

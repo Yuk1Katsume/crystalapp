@@ -328,6 +328,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         _wallpaperColorHex = map['wallpaperColor'] as String?;
                         _wallpaperImageUrl = map['wallpaperImage'] as String?;
                         _wallpaperOpacity = (map['wallpaperOpacity'] as num?)?.toDouble() ?? 1.0;
+                        _groupMembers.removeWhere((uid, _) => !members.contains(uid));
                       });
                     }
                   }
