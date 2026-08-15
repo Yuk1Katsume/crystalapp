@@ -558,6 +558,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final isFromContacts = contactName != null;
     final isOnline = userData['is_online'] ?? false;
     final avatarUrl = userData['avatar_url'];
+    final chatId = _chatService.getChatId(currentUser?.uid ?? '', userId);
 
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -622,6 +623,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         userId: userId,
         currentUserId: currentUser?.uid ?? '',
       ),
+      trailing: FutureBuilder<int>(
+        future: _localDb.getUnreadCountForConversation(chatId, currentUser?.uid ?? ''),
+        builder: (context, snap) {
+          final count = snap.data ?? 0;
+          if (count <= 0) return const SizedBox.shrink();
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF1744),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+          );
+        },
+      ),
       onTap: () async {
         await Navigator.push(
           context,
@@ -677,13 +696,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      onTap: () {
-        Navigator.push(
+      trailing: FutureBuilder<int>(
+        future: _localDb.getUnreadCountForConversation(group.id, currentUser?.uid ?? ''),
+        builder: (context, snap) {
+          final count = snap.data ?? 0;
+          if (count <= 0) return const SizedBox.shrink();
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF1744),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+          );
+        },
+      ),
+      onTap: () async {
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => ChatScreen(groupId: group.id, groupName: group.name),
           ),
         );
+        _refreshUnreadCount();
+        if (mounted) setState(() {});
       },
     );
   }
@@ -1087,6 +1126,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildContactStoryCard(UserStatusGroup group) {
     final contactName = _phoneContactNames[group.userId] ?? group.userName;
     final firstStatus = group.statuses.first;
+    final currentUid = currentUser?.uid ?? '';
+    final isUnread = group.hasUnread(currentUid);
 
     ImageProvider? bgImage;
     if (firstStatus.type == 'image') {
@@ -1111,7 +1152,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         decoration: BoxDecoration(
           color: const Color(0xFF1E1E1E),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF2A2A2A)),
+          border: Border.all(color: isUnread ? const Color(0xFFFF1744).withOpacity(0.5) : const Color(0xFF2A2A2A)),
           image: bgImage != null
               ? DecorationImage(
                   image: bgImage,
@@ -1129,7 +1170,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               child: CustomPaint(
                 painter: SegmentedStoryRingPainter(
                   count: group.statuses.length,
-                  color: const Color(0xFFFF1744),
+                  color: isUnread ? const Color(0xFFFF1744) : Colors.white38,
                   strokeWidth: 2.2,
                 ),
                 child: Padding(
@@ -1177,6 +1218,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final contactName = _phoneContactNames[group.userId] ?? group.userName;
     final lastStatus = group.statuses.last;
     final count = group.statuses.length;
+    final currentUid = currentUser?.uid ?? '';
+    final isUnread = group.hasUnread(currentUid);
 
     String subtitle = '📷 Foto';
     if (lastStatus.type == 'text') {
@@ -1198,7 +1241,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       leading: CustomPaint(
         painter: SegmentedStoryRingPainter(
           count: count,
-          color: const Color(0xFFFF1744),
+          color: isUnread ? const Color(0xFFFF1744) : Colors.white38,
           strokeWidth: 2.5,
         ),
         child: Padding(
@@ -1235,18 +1278,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           Text(
             timeStr,
-            style: const TextStyle(color: Color(0xFFFF1744), fontSize: 12, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: isUnread ? const Color(0xFFFF1744) : Colors.white38,
+              fontSize: 12,
+              fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
+            ),
           ),
           const SizedBox(height: 4),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: const BoxDecoration(
-              color: Color(0xFFFF1744),
+            decoration: BoxDecoration(
+              color: isUnread ? const Color(0xFFFF1744) : const Color(0xFF2E2E2E),
               shape: BoxShape.circle,
             ),
             child: Text(
               '$count',
-              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: isUnread ? Colors.white : Colors.white70,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],

@@ -145,9 +145,13 @@ class StatusService {
     final controller = StreamController<List<UserStatusGroup>>.broadcast();
     final Map<String, StatusItem> statusesMap = {};
 
-    void processAndEmit() {
+    void processAndEmit() async {
       final now = DateTime.now();
       final validStatuses = <StatusItem>[];
+      Set<String> locallyViewedIds = {};
+      try {
+        locallyViewedIds = await _localDb.getViewedStatusIds();
+      } catch (_) {}
 
       for (final status in statusesMap.values) {
         if (status.expiresAt.isBefore(now)) continue;
@@ -159,6 +163,11 @@ class StatusService {
               ? E2EEService.decryptPayload(status.caption!, _statusSecretSalt)
               : null;
 
+          final viewedSet = {...status.viewedByUserIds};
+          if (locallyViewedIds.contains(status.id)) {
+            viewedSet.add(currentUid);
+          }
+
           validStatuses.add(StatusItem(
             id: status.id,
             userId: status.userId,
@@ -169,7 +178,7 @@ class StatusService {
             caption: decryptedCaption,
             backgroundColor: status.backgroundColor,
             allowedViewerIds: status.allowedViewerIds,
-            viewedByUserIds: status.viewedByUserIds,
+            viewedByUserIds: viewedSet.toList(),
             createdAt: status.createdAt,
             expiresAt: status.expiresAt,
           ));
@@ -385,6 +394,12 @@ class StatusService {
     final currentUid = _auth.currentUser?.uid;
     if (currentUid == null || currentUid.isEmpty) return;
 
+    // 1. Save locally in SQLite for instant persistence
+    try {
+      await _localDb.markStatusAsViewedLocally(statusId);
+    } catch (_) {}
+
+    // 2. Update Firestore
     try {
       await _firestore.collection('statuses').doc(statusId).update({
         'viewed_by_user_ids': FieldValue.arrayUnion([currentUid]),

@@ -22,7 +22,7 @@ class LocalDatabaseService {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_messages (
@@ -63,6 +63,12 @@ class LocalDatabaseService {
           CREATE TABLE favorite_conversations (
             conversation_id TEXT PRIMARY KEY,
             created_at TEXT
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE viewed_statuses (
+            status_id TEXT PRIMARY KEY,
+            viewed_at TEXT
           )
         ''');
       },
@@ -124,6 +130,16 @@ class LocalDatabaseService {
           } catch (_) {}
           try {
             await db.execute('ALTER TABLE local_messages ADD COLUMN sender_avatar TEXT');
+          } catch (_) {}
+        }
+        if (oldVersion < 9) {
+          try {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS viewed_statuses (
+                status_id TEXT PRIMARY KEY,
+                viewed_at TEXT
+              )
+            ''');
           } catch (_) {}
         }
       },
@@ -451,6 +467,38 @@ class LocalDatabaseService {
       WHERE group_id = ? AND is_read = 0 AND sender_id != ?
     ''', [groupId, currentUserId]);
     return Sqflite.firstIntValue(res) ?? 0;
+  }
+
+  /// ----------------------------------------
+  /// Viewed Statuses Methods (Local Persistence)
+  /// ----------------------------------------
+  Future<void> markStatusAsViewedLocally(String statusId) async {
+    final database = await db;
+    await database.insert(
+      'viewed_statuses',
+      {
+        'status_id': statusId,
+        'viewed_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Set<String>> getViewedStatusIds() async {
+    final database = await db;
+    final maps = await database.query('viewed_statuses');
+    return maps.map((e) => e['status_id'] as String).toSet();
+  }
+
+  Future<bool> isStatusViewedLocally(String statusId) async {
+    final database = await db;
+    final maps = await database.query(
+      'viewed_statuses',
+      where: 'status_id = ?',
+      whereArgs: [statusId],
+      limit: 1,
+    );
+    return maps.isNotEmpty;
   }
 }
 
