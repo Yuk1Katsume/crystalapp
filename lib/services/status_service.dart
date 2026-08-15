@@ -135,6 +135,8 @@ class StatusService {
     return status;
   }
 
+  final StreamController<void> _statusViewedTrigger = StreamController<void>.broadcast();
+
   /// Real-time stream of contact status updates combining Supabase + Firestore
   Stream<List<UserStatusGroup>> getRecentStatusesStream() {
     final currentUid = _auth.currentUser?.uid ?? '';
@@ -216,6 +218,11 @@ class StatusService {
       }
     }
 
+    // 0. Listen to local view status triggers
+    final viewSub = _statusViewedTrigger.stream.listen((_) {
+      processAndEmit();
+    });
+
     // 1. Supabase Stream on GLOBAL_STATUSES
     StreamSubscription? supaSub;
     try {
@@ -273,6 +280,7 @@ class StatusService {
         }).catchError((_) {});
 
     controller.onCancel = () {
+      viewSub.cancel();
       supaSub?.cancel();
       fireSub?.cancel();
     };
@@ -397,6 +405,9 @@ class StatusService {
     // 1. Save locally in SQLite for instant persistence
     try {
       await _localDb.markStatusAsViewedLocally(statusId);
+      if (!_statusViewedTrigger.isClosed) {
+        _statusViewedTrigger.add(null);
+      }
     } catch (_) {}
 
     // 2. Update Firestore

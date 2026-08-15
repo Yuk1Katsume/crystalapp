@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -989,7 +990,177 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
+  Widget _buildSystemEventBubble(Message msg) {
+    Map<String, dynamic> data = {};
+    try {
+      data = jsonDecode(msg.text) as Map<String, dynamic>;
+    } catch (_) {
+      // Fallback for simple string system messages
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.9),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            msg.text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    final action = data['action'] as String? ?? '';
+    final actorName = (data['actor_name'] as String? ?? 'Un miembro');
+    final isMe = (data['actor_id'] == currentUser?.uid);
+    final who = isMe ? 'Tú' : actorName;
+
+    if (action == 'group_icon_changed') {
+      final oldIcon = data['old_icon'] as String?;
+      final newIcon = data['new_icon'] as String?;
+
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.95),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF2E3840)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: const Color(0xFF2C2C2E),
+                    backgroundImage: (oldIcon != null && oldIcon.isNotEmpty && oldIcon.startsWith('http'))
+                        ? NetworkImage(oldIcon)
+                        : null,
+                    child: (oldIcon == null || oldIcon.isEmpty || !oldIcon.startsWith('http'))
+                        ? const Icon(Icons.groups_rounded, color: Colors.white54, size: 20)
+                        : null,
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: Icon(Icons.arrow_forward_rounded, color: Color(0xFFFF1744), size: 18),
+                  ),
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: const Color(0xFF2C2C2E),
+                    backgroundImage: (newIcon != null && newIcon.isNotEmpty && newIcon.startsWith('http'))
+                        ? NetworkImage(newIcon)
+                        : null,
+                    child: (newIcon == null || newIcon.isEmpty || !newIcon.startsWith('http'))
+                        ? const Icon(Icons.groups_rounded, color: Colors.white54, size: 20)
+                        : null,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '$who ha cambiado el icono del grupo',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else if (action == 'group_description_changed') {
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.95),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF2E3840)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$who ha cambiado la descripción del grupo.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 2),
+              GestureDetector(
+                onTap: () {
+                  if (widget.groupId != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoScreen(
+                          groupId: widget.groupId!,
+                          groupName: widget.groupName ?? 'Grupo',
+                        ),
+                      ),
+                    );
+                  }
+                },
+                child: const Text(
+                  'Pulsa aquí para verla',
+                  style: TextStyle(
+                    color: Color(0xFF53BDEB),
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else if (action == 'group_name_changed') {
+      final newName = data['name'] as String? ?? '';
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.95),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            '$who cambió el nombre a "$newName"',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E2428).withOpacity(0.9),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          msg.text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMessageBubble(Message msg, bool isMe, {bool isSelected = false}) {
+    if (msg.type == ChatMessageType.system) {
+      return _buildSystemEventBubble(msg);
+    }
+
     final isVoiceNote = msg.type == ChatMessageType.audio ||
         (msg.mediaUrl != null && (msg.mediaUrl!.endsWith('.m4a') || msg.mediaUrl!.endsWith('.aac') || msg.text == '🎤 Mensaje de voz'));
 

@@ -311,8 +311,10 @@ class GroupChatService {
     String? name,
     String? description,
     String? iconUrl,
+    String? oldIconUrl,
   }) async {
     try {
+      final currentUid = _auth.currentUser?.uid ?? '';
       final updates = <String, dynamic>{};
       if (name != null) updates['name'] = name;
       if (description != null) updates['description'] = description;
@@ -334,9 +336,10 @@ class GroupChatService {
           createdAt: group.createdAt,
         );
 
+        // 1. Broadcast to GLOBAL_GROUPS so Home and lists update instantly
         try {
           await SupabaseConfig.client.from('messages').insert({
-            'sender_id': _auth.currentUser?.uid ?? '',
+            'sender_id': currentUid,
             'recipient_id': 'ALL',
             'group_id': 'GLOBAL_GROUPS',
             'message_type': 'group_metadata',
@@ -344,53 +347,97 @@ class GroupChatService {
             'created_at': DateTime.now().toIso8601String(),
           });
         } catch (_) {}
+
+        // 2. Fetch actor name for system message
+        String actorName = 'Un miembro';
+        try {
+          final uRow = await SupabaseConfig.client
+              .from('users')
+              .select('display_name, username')
+              .eq('id', currentUid)
+              .maybeSingle();
+          if (uRow != null) {
+            actorName = uRow['display_name'] ?? uRow['username'] ?? 'Un miembro';
+          }
+        } catch (_) {}
+
+        // 3. Send system message in the group chat
+        if (iconUrl != null) {
+          final sysText = jsonEncode({
+            'action': 'group_icon_changed',
+            'actor_id': currentUid,
+            'actor_name': actorName,
+            'old_icon': oldIconUrl ?? '',
+            'new_icon': iconUrl,
+          });
+          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        } else if (description != null) {
+          final sysText = jsonEncode({
+            'action': 'group_description_changed',
+            'actor_id': currentUid,
+            'actor_name': actorName,
+            'description': description,
+          });
+          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        } else if (name != null) {
+          final sysText = jsonEncode({
+            'action': 'group_name_changed',
+            'actor_id': currentUid,
+            'actor_name': actorName,
+            'name': name,
+          });
+          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+        }
       }
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  /// Send system message in a group (photo changed, description changed, etc.)
+  Future<void> sendGroupSystemMessage({
+    required String groupId,
+    required String systemText,
+  }) async {
+    final currentUid = _auth.currentUser?.uid ?? '';
+    final now = DateTime.now();
+    final msgId = const Uuid().v4();
+
+    // 1. Save locally in SQLite
+    await _localDb.saveLocalMessage(
+      id: msgId,
+      senderId: currentUid,
+      recipientId: groupId,
+      groupId: groupId,
+      text: systemText,
+      messageType: 'system',
+      createdAt: now,
+      isRead: true,
+      status: 'sent',
+    );
+
+    // 2. Broadcast single row to group stream
+    try {
+      await SupabaseConfig.client.from('messages').insert({
+        'sender_id': currentUid,
+        'recipient_id': 'ALL',
+        'group_id': groupId,
+        'message_type': 'system',
+        'encrypted_content': systemText,
+        'created_at': now.toIso8601String(),
+      });
+    } catch (_) {}
   }
 
   /// Update group name
   Future<bool> updateGroupName(String groupId, String newName) async {
-    try {
-      await _firestore.collection('groups').doc(groupId).update({'name': newName});
-      final group = await getGroupDetails(groupId);
-      if (group != null) {
-        final updatedGroup = GroupModel(
-          id: group.id,
-          name: newName,
-          description: group.description,
-          iconUrl: group.iconUrl,
-          memberIds: group.memberIds,
-          adminId: group.adminId,
-          createdAt: group.createdAt,
-        );
-        try {
-          await SupabaseConfig.client.from('messages').insert({
-            'sender_id': _auth.currentUser?.uid ?? '',
-            'recipient_id': 'ALL',
-            'group_id': 'GLOBAL_GROUPS',
-            'message_type': 'group_metadata',
-            'encrypted_content': jsonEncode(updatedGroup.toJson()),
-            'created_at': DateTime.now().toIso8601String(),
-          });
-        } catch (_) {}
-      }
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return updateGroupInfo(groupId: groupId, name: newName);
   }
 
   /// Update group description
   Future<bool> updateGroupDescription(String groupId, String newDescription) async {
-    try {
-      await _firestore.collection('groups').doc(groupId).update({'description': newDescription});
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return updateGroupInfo(groupId: groupId, description: newDescription);
   }
 
   /// Pick image for group icon
@@ -399,7 +446,7 @@ class GroupChatService {
   }
 
   /// Upload group icon to Supabase Storage and broadcast to Supabase + Firestore
-  Future<String?> uploadGroupIcon(String groupId, File imageFile) async {
+  Future<String?> uploadGroupIcon(String groupId, File imageFile, {String? oldIconUrl}) async {
     try {
       final bytes = await imageFile.readAsBytes();
       final fileExt = imageFile.path.split('.').last;
@@ -413,30 +460,11 @@ class GroupChatService {
           .from('avatars')
           .getPublicUrl(fileName);
 
-      await _firestore.collection('groups').doc(groupId).update({'iconUrl': publicUrl});
-
-      final group = await getGroupDetails(groupId);
-      if (group != null) {
-        final updatedGroup = GroupModel(
-          id: group.id,
-          name: group.name,
-          description: group.description,
-          iconUrl: publicUrl,
-          memberIds: group.memberIds,
-          adminId: group.adminId,
-          createdAt: group.createdAt,
-        );
-        try {
-          await SupabaseConfig.client.from('messages').insert({
-            'sender_id': _auth.currentUser?.uid ?? '',
-            'recipient_id': 'ALL',
-            'group_id': 'GLOBAL_GROUPS',
-            'message_type': 'group_metadata',
-            'encrypted_content': jsonEncode(updatedGroup.toJson()),
-            'created_at': DateTime.now().toIso8601String(),
-          });
-        } catch (_) {}
-      }
+      await updateGroupInfo(
+        groupId: groupId,
+        iconUrl: publicUrl,
+        oldIconUrl: oldIconUrl,
+      );
 
       return publicUrl;
     } catch (e) {

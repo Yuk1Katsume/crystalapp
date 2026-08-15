@@ -211,13 +211,13 @@ class LocalDatabaseService {
   }
 
   /// Mark all messages in a conversation as read
-  Future<void> markMessagesAsRead(String groupId) async {
+  Future<void> markMessagesAsRead(String conversationId) async {
     final database = await db;
     await database.update(
       'local_messages',
       {'is_read': 1, 'status': 'read'},
-      where: 'group_id = ? AND is_read = 0',
-      whereArgs: [groupId],
+      where: '(group_id = ? OR sender_id = ? OR recipient_id = ?) AND is_read = 0',
+      whereArgs: [conversationId, conversationId, conversationId],
     );
   }
 
@@ -459,13 +459,13 @@ class LocalDatabaseService {
   }
 
   /// Get unread message count for a single conversation
-  Future<int> getUnreadCountForConversation(String groupId, String currentUserId) async {
+  Future<int> getUnreadCountForConversation(String conversationId, String currentUserId) async {
     final database = await db;
     final res = await database.rawQuery('''
       SELECT COUNT(*) as unread_count 
       FROM local_messages 
-      WHERE group_id = ? AND is_read = 0 AND sender_id != ?
-    ''', [groupId, currentUserId]);
+      WHERE (group_id = ? OR sender_id = ?) AND is_read = 0 AND sender_id != ?
+    ''', [conversationId, conversationId, currentUserId]);
     return Sqflite.firstIntValue(res) ?? 0;
   }
 

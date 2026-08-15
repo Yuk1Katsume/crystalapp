@@ -110,7 +110,8 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
 
     setState(() => _isUploadingIcon = true);
 
-    final url = await _groupService.uploadGroupIcon(widget.groupId, File(picked.path));
+    final oldIcon = _groupIconUrl;
+    final url = await _groupService.uploadGroupIcon(widget.groupId, File(picked.path), oldIconUrl: oldIcon);
     if (url != null && mounted) {
       setState(() {
         _groupIconUrl = url;
