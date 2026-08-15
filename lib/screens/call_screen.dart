@@ -223,10 +223,15 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
         ? _resolvedUserName[0].toUpperCase()
         : 'U';
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
-      body: SafeArea(
-        child: Column(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _hangup();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0A0A),
+        body: SafeArea(
+          child: Column(
           children: [
             const SizedBox(height: 24),
 
@@ -369,7 +374,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
           ],
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildActionButton({

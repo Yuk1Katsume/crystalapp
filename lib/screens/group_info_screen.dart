@@ -824,6 +824,8 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   void _showMemberActionsDialog(Map<String, dynamic> member) {
     final name = member['resolved_name'] ?? member['display_name'] ?? member['username'] ?? 'Usuario';
     final uid = member['id']?.toString() ?? '';
+    final myUid = _authService.currentUser?.uid ?? '';
+    final isMeAdmin = _adminId == myUid;
 
     showModalBottomSheet(
       context: context,
@@ -846,6 +848,47 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                 );
               },
             ),
+            if (isMeAdmin && uid != myUid)
+              ListTile(
+                leading: const Icon(Icons.person_remove_rounded, color: Color(0xFFFF1744)),
+                title: Text('Eliminar a $name del grupo', style: const TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold)),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dCtx) => AlertDialog(
+                      backgroundColor: const Color(0xFF1E1E1E),
+                      title: Text('Eliminar a $name', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      content: Text('¿Deseas eliminar a $name de este grupo?', style: const TextStyle(color: Colors.white70)),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dCtx, false),
+                          child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                          onPressed: () => Navigator.pop(dCtx, true),
+                          child: const Text('Eliminar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirmed == true) {
+                    final ok = await _groupService.removeMemberFromGroup(widget.groupId, uid);
+                    if (ok && mounted) {
+                      setState(() {
+                        _memberIds.remove(uid);
+                        _membersData.removeWhere((m) => m['id'] == uid);
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('$name fue eliminado del grupo'), backgroundColor: const Color(0xFF1E1E1E)),
+                      );
+                    }
+                  }
+                },
+              ),
+            const SizedBox(height: 12),
           ],
         ),
       ),

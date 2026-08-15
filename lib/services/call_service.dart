@@ -36,7 +36,11 @@ class CallService {
   final StreamController<Map<String, dynamic>> _incomingCallController =
       StreamController<Map<String, dynamic>>.broadcast();
 
+  final StreamController<Map<String, dynamic>> _callEventsController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
+  Stream<Map<String, dynamic>> get onCallEvent => _callEventsController.stream;
 
   final Set<String> _processedCallIds = {};
   final Set<String> _activeRingingCallIds = {};
@@ -188,6 +192,9 @@ class CallService {
     var callerAvatar = data['caller_avatar'] as String?;
     final isVideo = data['is_video'] == true;
 
+    // Dispatch event to active CallScreen listeners
+    _callEventsController.add(data);
+
     // Resolve profile if callerName is generic or avatar is missing
     if (callerName.isEmpty || callerName == 'Usuario' || callerName == 'Contacto' || callerAvatar == null) {
       final profile = await resolveUserProfile(callerId);
@@ -214,6 +221,15 @@ class CallService {
         );
 
         _incomingCallController.add(data);
+      }
+    } else if (status == 'connected') {
+      // If caller receives answer SDP
+      final sdpAnswer = data['sdp_answer'] as Map<String, dynamic>?;
+      if (sdpAnswer != null && _peerConnection != null) {
+        try {
+          final answer = RTCSessionDescription(sdpAnswer['sdp'], sdpAnswer['type']);
+          await _peerConnection?.setRemoteDescription(answer);
+        } catch (_) {}
       }
     } else if (status == 'ended' || status == 'rejected') {
       if (_activeRingingCallIds.contains(callId)) {
@@ -343,11 +359,19 @@ class CallService {
     return callId;
   }
 
-  /// Listen to call state changes across both Supabase messages stream and Firestore
+  /// Listen to call state changes across Supabase, Firestore, and internal call events
   Stream<Map<String, dynamic>> getCallStream(String callId) {
     final controller = StreamController<Map<String, dynamic>>.broadcast();
 
-    // Supabase Stream on group_id == 'CALL_$callId'
+    // 1. Internal fast event bus
+    final eventSub = _callEventsController.stream.listen((data) {
+      final id = (data['call_id'] ?? data['id'] ?? data['doc_id'] ?? '').toString();
+      if (id == callId && !controller.isClosed) {
+        controller.add(data);
+      }
+    });
+
+    // 2. Supabase Stream on group_id == 'CALL_$callId'
     final supaSub = SupabaseConfig.client
         .from('messages')
         .stream(primaryKey: ['id'])
@@ -364,7 +388,7 @@ class CallService {
           }
         }, onError: (_) {});
 
-    // Firestore Stream
+    // 3. Firestore Stream
     final fireSub = _firestore.collection('call_signals').doc(callId).snapshots().listen((doc) {
       if (doc.exists && !controller.isClosed) {
         final d = doc.data() ?? {};
@@ -374,6 +398,7 @@ class CallService {
     }, onError: (_) {});
 
     controller.onCancel = () {
+      eventSub.cancel();
       supaSub.cancel();
       fireSub.cancel();
     };

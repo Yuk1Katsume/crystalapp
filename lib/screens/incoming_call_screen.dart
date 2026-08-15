@@ -156,11 +156,16 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
         ? _resolvedCallerName[0].toUpperCase()
         : 'C';
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _rejectCall();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0A0A),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
           child: Column(
             children: [
               const SizedBox(height: 20),
@@ -326,6 +331,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
           ),
         ),
       ),
-    );
+    ));
   }
 }

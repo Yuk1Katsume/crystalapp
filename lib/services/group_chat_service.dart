@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/message_model.dart';
+import 'chat_service.dart';
 import 'e2ee_service.dart';
 import 'supabase_config.dart';
 import 'voice_note_service.dart';
@@ -11,10 +13,9 @@ import 'voice_note_service.dart';
 class GroupChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final E2EEService _e2eeService = E2EEService();
   final ImagePicker _picker = ImagePicker();
 
-  /// Create a new group chat with timeout and multi-backend resilience
+  /// Create a new group chat with multi-backend resilience
   Future<GroupModel?> createGroup({
     required String name,
     required List<String> memberIds,
@@ -39,21 +40,20 @@ class GroupChatService {
         createdAt: DateTime.now(),
       );
 
-      // Save to Firestore with timeout
+      // 1. Save to Firestore with timeout
       try {
         await docRef.set(group.toJson()).timeout(const Duration(seconds: 4));
       } catch (_) {}
 
-      // Also persist to Supabase groups table
+      // 2. Broadcast to Supabase messages relay
       try {
-        await SupabaseConfig.client.from('groups').upsert({
-          'id': group.id,
-          'name': group.name,
-          'description': group.description,
-          'icon_url': group.iconUrl,
-          'member_ids': group.memberIds,
-          'admin_id': group.adminId,
-          'created_at': group.createdAt.toIso8601String(),
+        await SupabaseConfig.client.from('messages').insert({
+          'sender_id': currentUid,
+          'recipient_id': 'ALL',
+          'group_id': 'GLOBAL_GROUPS',
+          'message_type': 'group_metadata',
+          'encrypted_content': jsonEncode(group.toJson()),
+          'created_at': DateTime.now().toIso8601String(),
         }).timeout(const Duration(seconds: 4));
       } catch (_) {}
 
@@ -81,32 +81,38 @@ class GroupChatService {
       }
     } catch (_) {}
 
-    // Supabase fallback
+    // Supabase messages fallback
     try {
-      final res = await SupabaseConfig.client.from('groups').select().eq('id', groupId).maybeSingle().timeout(const Duration(seconds: 3));
-      if (res != null) {
-        return GroupModel(
-          id: res['id'],
-          name: res['name'] ?? 'Grupo',
-          description: res['description'],
-          iconUrl: res['icon_url'],
-          memberIds: List<String>.from(res['member_ids'] ?? []),
-          adminId: res['admin_id'] ?? '',
-          createdAt: DateTime.tryParse(res['created_at'] ?? '') ?? DateTime.now(),
-        );
+      final res = await SupabaseConfig.client
+          .from('messages')
+          .select()
+          .eq('group_id', 'GLOBAL_GROUPS')
+          .eq('message_type', 'group_metadata')
+          .order('created_at', ascending: false)
+          .limit(50);
+
+      for (var row in res) {
+        try {
+          final enc = row['encrypted_content'] as String? ?? '';
+          final map = jsonDecode(enc) as Map<String, dynamic>;
+          if (map['id'] == groupId) {
+            return GroupModel.fromJson(map);
+          }
+        } catch (_) {}
       }
     } catch (_) {}
 
     return null;
   }
 
-  /// Stream of user groups (resilient multi-source Supabase + Firestore real-time)
+  /// Stream of user groups (resilient multi-source Supabase + Firestore cloud reader)
+  /// Guarantees groups persist across reinstalls as long as user is in memberIds.
   Stream<List<GroupModel>> get myGroups {
     final user = _auth.currentUser;
     if (user == null) return Stream.value([]);
     final myUid = user.uid;
 
-    final controller = StreamController<List<GroupModel>>();
+    final controller = StreamController<List<GroupModel>>.broadcast();
     final Map<String, GroupModel> currentGroupsMap = {};
 
     void emitGroups() {
@@ -117,48 +123,46 @@ class GroupChatService {
       }
     }
 
-    // 1. Initial snapshot from Supabase
-    SupabaseConfig.client.from('groups').select().then((res) {
-      for (var item in res) {
-        final members = List<String>.from(item['member_ids'] ?? item['memberIds'] ?? []);
-        if (members.contains(myUid)) {
-          currentGroupsMap[item['id']] = GroupModel(
-            id: item['id'],
-            name: item['name'] ?? 'Grupo',
-            description: item['description'],
-            iconUrl: item['icon_url'] ?? item['iconUrl'],
-            memberIds: members,
-            adminId: item['admin_id'] ?? item['adminId'] ?? '',
-            createdAt: DateTime.tryParse(item['created_at'] ?? item['createdAt'] ?? '') ?? DateTime.now(),
-          );
-        }
-      }
-      emitGroups();
-    }).catchError((_) {});
+    // 1. Initial snapshot from Supabase GLOBAL_GROUPS
+    SupabaseConfig.client
+        .from('messages')
+        .select()
+        .eq('group_id', 'GLOBAL_GROUPS')
+        .eq('message_type', 'group_metadata')
+        .order('created_at', ascending: false)
+        .limit(100)
+        .then((res) {
+          for (var item in res) {
+            try {
+              final enc = item['encrypted_content'] as String? ?? '';
+              final map = jsonDecode(enc) as Map<String, dynamic>;
+              final group = GroupModel.fromJson(map);
+              if (group.memberIds.contains(myUid)) {
+                currentGroupsMap[group.id] = group;
+              }
+            } catch (_) {}
+          }
+          emitGroups();
+        }).catchError((_) {});
 
-    // 2. Real-time stream from Supabase groups table
+    // 2. Real-time stream from Supabase GLOBAL_GROUPS
     final sbSub = SupabaseConfig.client
-        .from('groups')
+        .from('messages')
         .stream(primaryKey: ['id'])
+        .eq('group_id', 'GLOBAL_GROUPS')
         .listen((data) {
-          final Set<String> currentIdsInStream = {};
           for (var item in data) {
-            final members = List<String>.from(item['member_ids'] ?? item['memberIds'] ?? []);
-            final id = item['id'] as String;
-            currentIdsInStream.add(id);
-
-            if (members.contains(myUid)) {
-              currentGroupsMap[id] = GroupModel(
-                id: id,
-                name: item['name'] ?? 'Grupo',
-                description: item['description'],
-                iconUrl: item['icon_url'] ?? item['iconUrl'],
-                memberIds: members,
-                adminId: item['admin_id'] ?? item['adminId'] ?? '',
-                createdAt: DateTime.tryParse(item['created_at'] ?? item['createdAt'] ?? '') ?? DateTime.now(),
-              );
-            } else {
-              currentGroupsMap.remove(id);
+            if (item['message_type'] == 'group_metadata') {
+              try {
+                final enc = item['encrypted_content'] as String? ?? '';
+                final map = jsonDecode(enc) as Map<String, dynamic>;
+                final group = GroupModel.fromJson(map);
+                if (group.memberIds.contains(myUid)) {
+                  currentGroupsMap[group.id] = group;
+                } else {
+                  currentGroupsMap.remove(group.id);
+                }
+              } catch (_) {}
             }
           }
           emitGroups();
@@ -171,7 +175,10 @@ class GroupChatService {
         .snapshots()
         .listen((snapshot) {
           for (var doc in snapshot.docs) {
-            currentGroupsMap[doc.id] = GroupModel.fromJson(doc.data());
+            try {
+              final g = GroupModel.fromJson(doc.data());
+              currentGroupsMap[doc.id] = g;
+            } catch (_) {}
           }
           emitGroups();
         }, onError: (_) {});
@@ -182,6 +189,95 @@ class GroupChatService {
     };
 
     return controller.stream;
+  }
+
+  /// Remove/Kick a member from group
+  Future<bool> removeMemberFromGroup(String groupId, String memberId) async {
+    try {
+      final group = await getGroupDetails(groupId);
+      if (group == null) return false;
+
+      final updatedMembers = List<String>.from(group.memberIds)..remove(memberId);
+
+      // 1. Update Firestore
+      await _firestore.collection('groups').doc(groupId).update({
+        'memberIds': updatedMembers,
+      }).timeout(const Duration(seconds: 4));
+
+      // 2. Broadcast updated group to Supabase
+      final updatedGroup = GroupModel(
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        iconUrl: group.iconUrl,
+        memberIds: updatedMembers,
+        adminId: group.adminId,
+        createdAt: group.createdAt,
+      );
+
+      try {
+        await SupabaseConfig.client.from('messages').insert({
+          'sender_id': _auth.currentUser?.uid ?? '',
+          'recipient_id': 'ALL',
+          'group_id': 'GLOBAL_GROUPS',
+          'message_type': 'group_metadata',
+          'encrypted_content': jsonEncode(updatedGroup.toJson()),
+          'created_at': DateTime.now().toIso8601String(),
+        }).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Add new members to existing group
+  Future<bool> addMembersToGroup(String groupId, List<String> newMemberIds) async {
+    try {
+      final group = await getGroupDetails(groupId);
+      if (group == null) return false;
+
+      final updatedMembers = {...group.memberIds, ...newMemberIds}.toList();
+
+      // 1. Update Firestore
+      await _firestore.collection('groups').doc(groupId).update({
+        'memberIds': updatedMembers,
+      }).timeout(const Duration(seconds: 4));
+
+      // 2. Broadcast to Supabase
+      final updatedGroup = GroupModel(
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        iconUrl: group.iconUrl,
+        memberIds: updatedMembers,
+        adminId: group.adminId,
+        createdAt: group.createdAt,
+      );
+
+      try {
+        await SupabaseConfig.client.from('messages').insert({
+          'sender_id': _auth.currentUser?.uid ?? '',
+          'recipient_id': 'ALL',
+          'group_id': 'GLOBAL_GROUPS',
+          'message_type': 'group_metadata',
+          'encrypted_content': jsonEncode(updatedGroup.toJson()),
+          'created_at': DateTime.now().toIso8601String(),
+        }).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Leave group
+  Future<bool> leaveGroup(String groupId) async {
+    final currentUid = _auth.currentUser?.uid;
+    if (currentUid == null || currentUid.isEmpty) return false;
+    return removeMemberFromGroup(groupId, currentUid);
   }
 
   /// Find all groups in common between the current user and another user
@@ -198,149 +294,129 @@ class GroupChatService {
 
       return snapshot.docs
           .map((doc) => GroupModel.fromJson(doc.data()))
-          .where((group) => group.memberIds.contains(otherUserId))
+          .where((g) => g.memberIds.contains(otherUserId))
           .toList();
-    } catch (_) {
+    } catch (e) {
       return [];
     }
   }
 
-  /// Update group name, description, or icon
-  Future<void> updateGroupInfo({
+  /// Update group general info (name, description, icon)
+  Future<bool> updateGroupInfo({
     required String groupId,
     String? name,
     String? description,
     String? iconUrl,
   }) async {
-    final Map<String, dynamic> updates = {};
-    if (name != null) updates['name'] = name;
-    if (description != null) updates['description'] = description;
-    if (iconUrl != null) updates['iconUrl'] = iconUrl;
-
     try {
-      await _firestore.collection('groups').doc(groupId).update(updates).timeout(const Duration(seconds: 4));
-    } catch (_) {}
+      final updates = <String, dynamic>{};
+      if (name != null) updates['name'] = name;
+      if (description != null) updates['description'] = description;
+      if (iconUrl != null) updates['iconUrl'] = iconUrl;
 
-    try {
-      final Map<String, dynamic> sbUpdates = {};
-      if (name != null) sbUpdates['name'] = name;
-      if (description != null) sbUpdates['description'] = description;
-      if (iconUrl != null) sbUpdates['icon_url'] = iconUrl;
-      await SupabaseConfig.client.from('groups').update(sbUpdates).eq('id', groupId).timeout(const Duration(seconds: 4));
-    } catch (_) {}
+      if (updates.isNotEmpty) {
+        await _firestore.collection('groups').doc(groupId).update(updates);
+      }
+
+      final group = await getGroupDetails(groupId);
+      if (group != null) {
+        final updatedGroup = GroupModel(
+          id: group.id,
+          name: name ?? group.name,
+          description: description ?? group.description,
+          iconUrl: iconUrl ?? group.iconUrl,
+          memberIds: group.memberIds,
+          adminId: group.adminId,
+          createdAt: group.createdAt,
+        );
+
+        try {
+          await SupabaseConfig.client.from('messages').insert({
+            'sender_id': _auth.currentUser?.uid ?? '',
+            'recipient_id': 'ALL',
+            'group_id': 'GLOBAL_GROUPS',
+            'message_type': 'group_metadata',
+            'encrypted_content': jsonEncode(updatedGroup.toJson()),
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        } catch (_) {}
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
-  /// Upload new group icon and update group
+  /// Update group name
+  Future<bool> updateGroupName(String groupId, String newName) async {
+    try {
+      await _firestore.collection('groups').doc(groupId).update({'name': newName});
+      final group = await getGroupDetails(groupId);
+      if (group != null) {
+        final updatedGroup = GroupModel(
+          id: group.id,
+          name: newName,
+          description: group.description,
+          iconUrl: group.iconUrl,
+          memberIds: group.memberIds,
+          adminId: group.adminId,
+          createdAt: group.createdAt,
+        );
+        try {
+          await SupabaseConfig.client.from('messages').insert({
+            'sender_id': _auth.currentUser?.uid ?? '',
+            'recipient_id': 'ALL',
+            'group_id': 'GLOBAL_GROUPS',
+            'message_type': 'group_metadata',
+            'encrypted_content': jsonEncode(updatedGroup.toJson()),
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        } catch (_) {}
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Update group description
+  Future<bool> updateGroupDescription(String groupId, String newDescription) async {
+    try {
+      await _firestore.collection('groups').doc(groupId).update({'description': newDescription});
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Pick image for group icon
+  Future<XFile?> pickImage() async {
+    return await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+  }
+
+  /// Upload group icon to Supabase Storage
   Future<String?> uploadGroupIcon(String groupId, File imageFile) async {
     try {
-      final ext = imageFile.path.split('.').last;
-      final fileName = 'group_${groupId}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final bytes = await imageFile.readAsBytes();
+      final fileExt = imageFile.path.split('.').last;
+      final fileName = 'group_${groupId}_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
 
-      await SupabaseConfig.client.storage.from('avatars').upload(fileName, imageFile);
-      final publicUrl = SupabaseConfig.client.storage.from('avatars').getPublicUrl(fileName);
+      await SupabaseConfig.client.storage
+          .from('avatars')
+          .uploadBinary(fileName, bytes);
 
-      await updateGroupInfo(groupId: groupId, iconUrl: publicUrl);
+      final publicUrl = SupabaseConfig.client.storage
+          .from('avatars')
+          .getPublicUrl(fileName);
+
+      await _firestore.collection('groups').doc(groupId).update({'iconUrl': publicUrl});
       return publicUrl;
     } catch (e) {
       return null;
     }
   }
 
-  /// Add new members to group across Firestore and Supabase
-  Future<void> addMembersToGroup(String groupId, List<String> newMemberIds) async {
-    // 1. Firestore
-    try {
-      await _firestore.collection('groups').doc(groupId).update({
-        'memberIds': FieldValue.arrayUnion(newMemberIds),
-      }).timeout(const Duration(seconds: 4));
-    } catch (_) {}
-
-    // 2. Supabase
-    try {
-      final res = await SupabaseConfig.client
-          .from('groups')
-          .select('member_ids')
-          .eq('id', groupId)
-          .maybeSingle()
-          .timeout(const Duration(seconds: 4));
-      
-      final currentList = List<String>.from(res?['member_ids'] ?? []);
-      final updatedList = {...currentList, ...newMemberIds}.toList();
-      
-      await SupabaseConfig.client
-          .from('groups')
-          .update({'member_ids': updatedList})
-          .eq('id', groupId)
-          .timeout(const Duration(seconds: 4));
-    } catch (_) {}
-  }
-
-  /// Remove a member or leave group across Firestore and Supabase
-  Future<void> removeMemberFromGroup(String groupId, String memberId) async {
-    // 1. Firestore
-    try {
-      await _firestore.collection('groups').doc(groupId).update({
-        'memberIds': FieldValue.arrayRemove([memberId]),
-      }).timeout(const Duration(seconds: 4));
-    } catch (_) {}
-
-    // 2. Supabase
-    try {
-      final res = await SupabaseConfig.client
-          .from('groups')
-          .select('member_ids')
-          .eq('id', groupId)
-          .maybeSingle()
-          .timeout(const Duration(seconds: 4));
-      
-      final currentList = List<String>.from(res?['member_ids'] ?? []);
-      currentList.remove(memberId);
-      
-      await SupabaseConfig.client
-          .from('groups')
-          .update({'member_ids': currentList})
-          .eq('id', groupId)
-          .timeout(const Duration(seconds: 4));
-    } catch (_) {}
-  }
-
-  /// Stream of group messages (E2EE decrypted)
-  Stream<List<Message>> getGroupMessages(String groupId) {
-    return _firestore
-        .collection('groups')
-        .doc(groupId)
-        .collection('messages')
-        .orderBy('timestamp', descending: false)
-        .snapshots()
-        .asyncMap((snapshot) async {
-      List<Message> messages = [];
-      for (var doc in snapshot.docs) {
-        final msg = Message.fromJson(doc.data());
-        if (msg.isEncrypted) {
-          final decryptedText =
-              E2EEService.decryptPayload(msg.text, groupId + '_group_key');
-          messages.add(Message(
-            id: msg.id,
-            text: decryptedText,
-            timestamp: msg.timestamp,
-            senderId: msg.senderId,
-            senderName: msg.senderName,
-            groupId: msg.groupId,
-            isEncrypted: true,
-            type: msg.type,
-            mediaUrl: msg.mediaUrl,
-            audioDurationSeconds: msg.audioDurationSeconds,
-            isRead: msg.isRead,
-          ));
-        } else {
-          messages.add(msg);
-        }
-      }
-      return messages;
-    });
-  }
-
-  /// Send message to group (E2EE encrypted)
+  /// Send encrypted group message
   Future<void> sendGroupMessage({
     required String groupId,
     required String text,
@@ -349,52 +425,18 @@ class GroupChatService {
     int? audioDurationSeconds,
     List<double>? waveformSamples,
   }) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    final encryptedText =
-        E2EEService.encryptPayload(text, groupId + '_group_key');
-
-    final docRef = _firestore
-        .collection('groups')
-        .doc(groupId)
-        .collection('messages')
-        .doc();
-
-    List<double>? samples = waveformSamples;
-    if (samples == null && mediaUrl != null && VoiceNoteService.messageWaveforms.containsKey(mediaUrl)) {
-      samples = VoiceNoteService.messageWaveforms[mediaUrl];
-    }
-    final waveformStr = samples?.map((s) => s.toStringAsFixed(2)).join(',');
-
-    if (samples != null) {
-      VoiceNoteService.cacheWaveform(docRef.id, samples);
-      if (mediaUrl != null) {
-        VoiceNoteService.cacheWaveform(mediaUrl, samples);
-      }
-    }
-
-    final message = Message(
-      id: docRef.id,
-      text: encryptedText,
-      timestamp: DateTime.now(),
-      senderId: user.uid,
-      senderName: user.displayName ?? user.phoneNumber ?? 'Member',
-      groupId: groupId,
-      isEncrypted: true,
+    await ChatService().sendDirectMessage(
+      recipientId: groupId,
+      text: text,
       type: type,
       mediaUrl: mediaUrl,
       audioDurationSeconds: audioDurationSeconds,
-      audioWaveform: waveformStr,
+      waveformSamples: waveformSamples,
     );
-
-    try {
-      await docRef.set(message.toJson()).timeout(const Duration(seconds: 4));
-    } catch (_) {}
   }
 
-  /// Pick Image for Chat/Group
-  Future<XFile?> pickImage() async {
-    return await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+  /// Stream group messages
+  Stream<List<Message>> getGroupMessages(String groupId) {
+    return ChatService().getChatMessagesWithUser(groupId);
   }
 }
