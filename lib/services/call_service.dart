@@ -47,10 +47,12 @@ class CallService {
 
   String get currentUserId => _auth.currentUser?.uid ?? '';
 
-  // WebRTC Session
+  // WebRTC Session & Candidate Queue
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
+  final List<RTCIceCandidate> _queuedIceCandidates = [];
+  bool _hasRemoteDescription = false;
 
   MediaStream? get localStream => _localStream;
   MediaStream? get remoteStream => _remoteStream;
@@ -60,7 +62,11 @@ class CallService {
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
       {'urls': 'stun:stun2.l.google.com:19302'},
+      {'urls': 'stun:stun3.l.google.com:19302'},
+      {'urls': 'stun:stun4.l.google.com:19302'},
+      {'urls': 'stun:global.stun.twilio.com:3478'},
     ],
+    'sdpSemantics': 'unified-plan',
   };
 
   /// Asynchronously resolves current logged in user's profile
@@ -88,9 +94,14 @@ class CallService {
           final dName = res['display_name']?.toString();
           final uName = res['username']?.toString();
           final av = res['avatar_url']?.toString();
-          if (dName != null && dName.isNotEmpty) name = dName;
-          else if (uName != null && uName.isNotEmpty) name = uName;
-          if (av != null && av.isNotEmpty) avatar = av;
+          if (dName != null && dName.isNotEmpty) {
+            name = dName;
+          } else if (uName != null && uName.isNotEmpty) {
+            name = uName;
+          }
+          if (av != null && av.isNotEmpty) {
+            avatar = av;
+          }
         }
       } catch (_) {}
     }
@@ -150,8 +161,6 @@ class CallService {
                   final signalData = jsonDecode(encrypted) as Map<String, dynamic>;
                   signalData['message_id'] = item['id'];
                   handleIncomingCallSignal(signalData);
-
-                  // Delete signal from Supabase relay after processing
                   SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
                 } catch (_) {}
               }
@@ -229,6 +238,7 @@ class CallService {
         try {
           final answer = RTCSessionDescription(sdpAnswer['sdp'], sdpAnswer['type']);
           await _peerConnection?.setRemoteDescription(answer);
+          await _flushQueuedIceCandidates();
         } catch (_) {}
       }
     } else if (status == 'ended' || status == 'rejected') {
@@ -284,8 +294,9 @@ class CallService {
     } catch (_) {}
   }
 
-  /// Create and initiate a new outgoing E2EE call with WebRTC
-  Future<String> startCall({
+  /// Create and initiate a new outgoing call asynchronously using a pre-generated callId (Zero UI latency)
+  Future<void> startCallWithId({
+    required String callId,
     required String receiverId,
     required String receiverName,
     String? receiverAvatar,
@@ -295,19 +306,12 @@ class CallService {
     final myProfile = await getMyProfile();
     final myName = myProfile['name'] ?? 'Usuario';
     final myAvatar = myProfile['avatar'];
-    final callId = _uuid.v4();
 
     var finalReceiverName = receiverName;
     var finalReceiverAvatar = receiverAvatar;
-    if (finalReceiverName.isEmpty || finalReceiverName == 'Contacto' || finalReceiverAvatar == null) {
-      final rProf = await resolveUserProfile(receiverId);
-      if (rProf['name'] != null && rProf['name'] != 'Contacto') {
-        finalReceiverName = rProf['name']!;
-      }
-      if (rProf['avatar'] != null) {
-        finalReceiverAvatar = rProf['avatar'];
-      }
-    }
+
+    _queuedIceCandidates.clear();
+    _hasRemoteDescription = false;
 
     // 1. Initialize WebRTC Media & Peer Connection
     RTCSessionDescription? offer;
@@ -355,7 +359,23 @@ class CallService {
     try {
       await _firestore.collection('call_signals').doc(callId).set(callPayload).timeout(const Duration(seconds: 4));
     } catch (_) {}
+  }
 
+  /// Create and initiate a new outgoing E2EE call with WebRTC
+  Future<String> startCall({
+    required String receiverId,
+    required String receiverName,
+    String? receiverAvatar,
+    bool isVideo = false,
+  }) async {
+    final callId = _uuid.v4();
+    await startCallWithId(
+      callId: callId,
+      receiverId: receiverId,
+      receiverName: receiverName,
+      receiverAvatar: receiverAvatar,
+      isVideo: isVideo,
+    );
     return callId;
   }
 
@@ -411,6 +431,9 @@ class CallService {
     _activeRingingCallIds.remove(callId);
     await _notificationService.cancelCallNotification(callId.hashCode);
 
+    _queuedIceCandidates.clear();
+    _hasRemoteDescription = false;
+
     try {
       // 1. Fetch Call Doc
       Map<String, dynamic>? data;
@@ -443,6 +466,7 @@ class CallService {
       if (offerMap != null) {
         final offer = RTCSessionDescription(offerMap['sdp'], offerMap['type']);
         await _peerConnection?.setRemoteDescription(offer);
+        await _flushQueuedIceCandidates();
       }
 
       // 4. Create Answer SDP
@@ -622,6 +646,26 @@ class CallService {
     await _localDb.saveCallLog(log);
   }
 
+  Future<void> _addIceCandidateSafe(RTCIceCandidate candidate) async {
+    if (_peerConnection != null && _hasRemoteDescription) {
+      try {
+        await _peerConnection?.addCandidate(candidate);
+      } catch (_) {}
+    } else {
+      _queuedIceCandidates.add(candidate);
+    }
+  }
+
+  Future<void> _flushQueuedIceCandidates() async {
+    _hasRemoteDescription = true;
+    for (final cand in _queuedIceCandidates) {
+      try {
+        await _peerConnection?.addCandidate(cand);
+      } catch (_) {}
+    }
+    _queuedIceCandidates.clear();
+  }
+
   /// Initialize WebRTC Peer Connection & Media Streams with Dual Relay Candidate Exchange
   Future<void> _initWebRTC({
     required bool isVideo,
@@ -697,7 +741,7 @@ class CallService {
                     candData['sdpMid'],
                     candData['sdpMLineIndex'],
                   );
-                  _peerConnection?.addCandidate(cand);
+                  _addIceCandidateSafe(cand);
                   SupabaseConfig.client.from('messages').delete().eq('id', row['id']).then((_) {}).catchError((_) {});
                 } catch (_) {}
               }
@@ -721,7 +765,7 @@ class CallService {
                 data['sdpMid'],
                 data['sdpMLineIndex'],
               );
-              _peerConnection?.addCandidate(cand);
+              _addIceCandidateSafe(cand);
             }
           }
         }
@@ -733,6 +777,9 @@ class CallService {
     try {
       _supabaseCandSub?.cancel();
       _firestoreCandSub?.cancel();
+
+      _queuedIceCandidates.clear();
+      _hasRemoteDescription = false;
 
       _localStream?.getTracks().forEach((track) {
         track.stop();

@@ -22,6 +22,7 @@ import 'status_view_screen.dart';
 import 'settings_screen.dart';
 import 'call_screen.dart';
 import 'incoming_call_screen.dart';
+import 'package:uuid/uuid.dart';
 import '../services/update_service.dart';
 import '../services/contacts_service.dart';
 
@@ -1410,28 +1411,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       log.isVideo ? Icons.videocam_rounded : Icons.call_rounded,
                       color: const Color(0xFFFF1744),
                     ),
-                    onPressed: () async {
-                      final callId = await CallService().startCall(
-                        receiverId: log.otherUserId,
-                        receiverName: log.otherUserName,
-                        receiverAvatar: log.otherUserAvatar,
-                        isVideo: log.isVideo,
-                      );
-                      if (mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => CallScreen(
-                              callId: callId,
-                              otherUserId: log.otherUserId,
-                              otherUserName: log.otherUserName,
-                              otherUserAvatar: log.otherUserAvatar,
-                              isOutgoing: true,
-                              isVideo: log.isVideo,
-                            ),
+                    onPressed: () {
+                      final callId = const Uuid().v4();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CallScreen(
+                            callId: callId,
+                            otherUserId: log.otherUserId,
+                            otherUserName: log.otherUserName,
+                            otherUserAvatar: log.otherUserAvatar,
+                            isOutgoing: true,
+                            isVideo: log.isVideo,
                           ),
-                        );
-                      }
+                        ),
+                      );
                     },
                   ),
                 );

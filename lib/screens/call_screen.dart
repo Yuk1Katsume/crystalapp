@@ -40,6 +40,7 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
   bool _isConnected = false;
   bool _isMuted = false;
   bool _isSpeaker = false;
+  bool _isEnding = false;
   int _callDuration = 0;
   Timer? _callTimer;
   StreamSubscription? _callStreamSub;
@@ -71,6 +72,14 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
       _startTimer();
     } else {
       _playOutgoingDialToneIfOutgoing();
+      // Start call asynchronously in background with zero UI delay
+      _callService.startCallWithId(
+        callId: widget.callId,
+        receiverId: widget.otherUserId,
+        receiverName: widget.otherUserName,
+        receiverAvatar: widget.otherUserAvatar,
+        isVideo: widget.isVideo,
+      );
     }
 
     _listenToCallSignals();
@@ -130,7 +139,11 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
   }
 
   void _onCallEndedByRemote() async {
+    if (_isEnding) return;
+    _isEnding = true;
+
     _callTimer?.cancel();
+    _callStreamSub?.cancel();
     await _soundPlayer.stop();
     try {
       await _soundPlayer.play(AssetSource('audio/call_ended.wav'));
@@ -145,12 +158,18 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
           backgroundColor: Color(0xFF1E1E1E),
         ),
       );
-      Navigator.pop(context);
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
     }
   }
 
   Future<void> _hangup() async {
+    if (_isEnding) return;
+    _isEnding = true;
+
     _callTimer?.cancel();
+    _callStreamSub?.cancel();
     await _soundPlayer.stop();
     try {
       await _soundPlayer.play(AssetSource('audio/call_ended.wav'));
@@ -158,9 +177,15 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
 
     await CallNotificationService().cancelCallNotification(widget.callId.hashCode);
 
+    if (mounted) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    }
+
     final myProf = await _callService.getMyProfile();
 
-    await _callService.endCall(
+    _callService.endCall(
       callId: widget.callId,
       callerId: widget.isOutgoing ? _currentUid : widget.otherUserId,
       callerName: widget.isOutgoing ? (myProf['name'] ?? 'Usuario') : _resolvedUserName,
@@ -172,10 +197,6 @@ class _CallScreenState extends State<CallScreen> with SingleTickerProviderStateM
       durationSeconds: _callDuration,
       isVideo: widget.isVideo,
     );
-
-    if (mounted) {
-      Navigator.pop(context);
-    }
   }
 
   void _toggleMute() {
