@@ -199,6 +199,7 @@ class GroupChatService {
   /// Remove/Kick a member from group
   Future<bool> removeMemberFromGroup(String groupId, String memberId) async {
     try {
+      final currentUid = _auth.currentUser?.uid ?? '';
       final group = await getGroupDetails(groupId);
       if (group == null) return false;
 
@@ -222,13 +223,42 @@ class GroupChatService {
 
       try {
         await SupabaseConfig.client.from('messages').insert({
-          'sender_id': _auth.currentUser?.uid ?? '',
+          'sender_id': currentUid,
           'recipient_id': 'ALL',
           'group_id': 'GLOBAL_GROUPS',
           'message_type': 'group_metadata',
           'encrypted_content': jsonEncode(updatedGroup.toJson()),
           'created_at': DateTime.now().toIso8601String(),
         }).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+
+      // 3. Send system message in chat
+      try {
+        String actorName = 'Un admin';
+        String targetName = 'un usuario';
+
+        final users = await SupabaseConfig.client
+            .from('users')
+            .select('id, display_name, username')
+            .filter('id', 'in', [currentUid, memberId]);
+
+        for (var u in users) {
+          final uid = u['id']?.toString();
+          final name = u['display_name'] ?? u['username'] ?? 'Usuario';
+          if (uid == currentUid) actorName = name;
+          if (uid == memberId) targetName = name;
+        }
+
+        final isSelfExit = (memberId == currentUid);
+        final sysText = jsonEncode({
+          'action': isSelfExit ? 'member_left' : 'member_removed',
+          'actor_id': currentUid,
+          'actor_name': actorName,
+          'target_id': memberId,
+          'target_name': targetName,
+        });
+
+        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
       } catch (_) {}
 
       return true;
@@ -321,75 +351,79 @@ class GroupChatService {
       if (description != null) updates['description'] = description;
       if (iconUrl != null) updates['iconUrl'] = iconUrl;
 
-      if (updates.isNotEmpty) {
-        await _firestore.collection('groups').doc(groupId).update(updates);
-      }
-
+      // 1. Fetch current details or prepare local fallback
       final group = await getGroupDetails(groupId);
-      if (group != null) {
-        final updatedGroup = GroupModel(
-          id: group.id,
-          name: name ?? group.name,
-          description: description ?? group.description,
-          iconUrl: iconUrl ?? group.iconUrl,
-          memberIds: group.memberIds,
-          adminId: group.adminId,
-          createdAt: group.createdAt,
-        );
+      final updatedGroup = GroupModel(
+        id: groupId,
+        name: name ?? group?.name ?? 'Grupo',
+        description: description ?? group?.description,
+        iconUrl: iconUrl ?? group?.iconUrl,
+        memberIds: group?.memberIds ?? [currentUid],
+        adminId: group?.adminId ?? currentUid,
+        createdAt: group?.createdAt ?? DateTime.now(),
+      );
 
-        // 1. Broadcast to GLOBAL_GROUPS so Home and lists update instantly
-        try {
-          await SupabaseConfig.client.from('messages').insert({
-            'sender_id': currentUid,
-            'recipient_id': 'ALL',
-            'group_id': 'GLOBAL_GROUPS',
-            'message_type': 'group_metadata',
-            'encrypted_content': jsonEncode(updatedGroup.toJson()),
-            'created_at': DateTime.now().toIso8601String(),
-          });
-        } catch (_) {}
+      // 2. Broadcast immediately to Supabase GLOBAL_GROUPS in parallel
+      SupabaseConfig.client.from('messages').insert({
+        'sender_id': currentUid,
+        'recipient_id': 'ALL',
+        'group_id': 'GLOBAL_GROUPS',
+        'message_type': 'group_metadata',
+        'encrypted_content': jsonEncode(updatedGroup.toJson()),
+        'created_at': DateTime.now().toIso8601String(),
+      }).timeout(const Duration(seconds: 4)).catchError((_) {});
 
-        // 2. Fetch actor name for system message
-        String actorName = 'Un miembro';
-        try {
-          final uRow = await SupabaseConfig.client
-              .from('users')
-              .select('display_name, username')
-              .eq('id', currentUid)
-              .maybeSingle();
-          if (uRow != null) {
-            actorName = uRow['display_name'] ?? uRow['username'] ?? 'Un miembro';
-          }
-        } catch (_) {}
-
-        // 3. Send system message in the group chat
-        if (iconUrl != null) {
-          final sysText = jsonEncode({
-            'action': 'group_icon_changed',
-            'actor_id': currentUid,
-            'actor_name': actorName,
-            'old_icon': oldIconUrl ?? '',
-            'new_icon': iconUrl,
-          });
-          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
-        } else if (description != null) {
-          final sysText = jsonEncode({
-            'action': 'group_description_changed',
-            'actor_id': currentUid,
-            'actor_name': actorName,
-            'description': description,
-          });
-          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
-        } else if (name != null) {
-          final sysText = jsonEncode({
-            'action': 'group_name_changed',
-            'actor_id': currentUid,
-            'actor_name': actorName,
-            'name': name,
-          });
-          await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
-        }
+      // 3. Update Firestore in parallel with timeout
+      if (updates.isNotEmpty) {
+        _firestore
+            .collection('groups')
+            .doc(groupId)
+            .update(updates)
+            .timeout(const Duration(seconds: 4))
+            .catchError((_) {});
       }
+
+      // 4. Fetch actor name for system message
+      String actorName = 'Un miembro';
+      try {
+        final uRow = await SupabaseConfig.client
+            .from('users')
+            .select('display_name, username')
+            .eq('id', currentUid)
+            .maybeSingle();
+        if (uRow != null) {
+          actorName = uRow['display_name'] ?? uRow['username'] ?? 'Un miembro';
+        }
+      } catch (_) {}
+
+      // 5. Send system message in the group chat
+      if (iconUrl != null) {
+        final sysText = jsonEncode({
+          'action': 'group_icon_changed',
+          'actor_id': currentUid,
+          'actor_name': actorName,
+          'old_icon': oldIconUrl ?? '',
+          'new_icon': iconUrl,
+        });
+        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+      } else if (description != null) {
+        final sysText = jsonEncode({
+          'action': 'group_description_changed',
+          'actor_id': currentUid,
+          'actor_name': actorName,
+          'description': description,
+        });
+        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+      } else if (name != null) {
+        final sysText = jsonEncode({
+          'action': 'group_name_changed',
+          'actor_id': currentUid,
+          'actor_name': actorName,
+          'name': name,
+        });
+        await sendGroupSystemMessage(groupId: groupId, systemText: sysText);
+      }
+
       return true;
     } catch (_) {
       return false;

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -43,12 +45,88 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
 
   bool _isLoading = true;
   bool _isUploadingIcon = false;
+  StreamSubscription? _metadataSub;
 
   @override
   void initState() {
     super.initState();
     _groupName = widget.groupName;
     _loadGroupDetails();
+    _listenToGroupRealtimeUpdates();
+  }
+
+  @override
+  void dispose() {
+    _metadataSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenToGroupRealtimeUpdates() {
+    try {
+      _metadataSub = SupabaseConfig.client
+          .from('messages')
+          .stream(primaryKey: ['id'])
+          .eq('group_id', 'GLOBAL_GROUPS')
+          .listen((data) {
+            for (var row in data) {
+              try {
+                if (row['message_type'] == 'group_metadata') {
+                  final enc = row['encrypted_content'] as String? ?? '';
+                  final map = jsonDecode(enc) as Map<String, dynamic>;
+                  if (map['id'] == widget.groupId) {
+                    final updated = GroupModel.fromJson(map);
+                    if (mounted) {
+                      setState(() {
+                        _group = updated;
+                        _groupName = updated.name;
+                        _groupDescription = updated.description;
+                        _groupIconUrl = updated.iconUrl;
+                        _adminId = updated.adminId;
+                        _memberIds = updated.memberIds;
+                      });
+                      _refreshMembersData(updated.memberIds);
+                    }
+                  }
+                }
+              } catch (_) {}
+            }
+          });
+    } catch (_) {}
+  }
+
+  Future<void> _refreshMembersData(List<String> memberIds) async {
+    if (memberIds.isEmpty) {
+      if (mounted) setState(() => _membersData = []);
+      return;
+    }
+    try {
+      final List<dynamic> users = await SupabaseConfig.client
+          .from('users')
+          .select('id, username, display_name, phone, avatar_url, is_online')
+          .filter('id', 'in', memberIds);
+
+      final List<Map<String, dynamic>> resolvedMembers = [];
+      for (final u in users) {
+        final uMap = Map<String, dynamic>.from(u as Map);
+        final uid = uMap['id']?.toString() ?? '';
+        final phone = uMap['phone']?.toString();
+
+        final contactName = await _contactsService.getContactNameForUser(uid, phone);
+        if (contactName != null && contactName.isNotEmpty) {
+          uMap['resolved_name'] = contactName;
+          uMap['is_in_contacts'] = true;
+        } else {
+          uMap['resolved_name'] = uMap['display_name'] ?? uMap['username'] ?? 'Usuario';
+          uMap['is_in_contacts'] = false;
+        }
+        resolvedMembers.add(uMap);
+      }
+      if (mounted) {
+        setState(() {
+          _membersData = resolvedMembers;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadGroupDetails() async {

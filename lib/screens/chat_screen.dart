@@ -1140,6 +1140,45 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           ),
         ),
       );
+    } else if (action == 'member_left') {
+      final isTargetMe = (data['target_id'] == currentUser?.uid);
+      final text = isTargetMe ? 'Saliste del grupo' : '$who salió del grupo';
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.95),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    } else if (action == 'member_removed') {
+      final targetName = data['target_name'] as String? ?? 'un usuario';
+      final isTargetMe = (data['target_id'] == currentUser?.uid);
+      final text = isTargetMe
+          ? '$who te eliminó del grupo'
+          : (isMe ? 'Eliminaste a $targetName' : '$who eliminó a $targetName');
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E2428).withOpacity(0.95),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
     }
 
     return Center(
