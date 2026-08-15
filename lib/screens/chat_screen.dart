@@ -246,10 +246,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   bool _recipientIsOnline = false;
+  StreamSubscription? _presenceSub;
 
   void _subscribeToPresence() {
     if (isGroup || widget.recipientId == null) return;
-    SupabaseConfig.client
+    _presenceSub?.cancel();
+    _presenceSub = SupabaseConfig.client
         .from('users')
         .stream(primaryKey: ['id'])
         .eq('id', widget.recipientId!)
@@ -259,7 +261,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
               _recipientIsOnline = data.first['is_online'] ?? false;
             });
           }
-        });
+        }, onError: (_) {});
   }
 
   final StreamController<List<Message>> _uiStreamController = StreamController<List<Message>>.broadcast();
@@ -280,6 +282,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
+    _presenceSub?.cancel();
     _voiceDurationSub?.cancel();
     _sub?.cancel();
     _uiStreamController.close();
@@ -506,20 +509,22 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final pickerHeight = (_keyboardHeight < 300 ? 320.0 : _keyboardHeight) + bottomPadding;
 
     return PopScope(
-      canPop: !_isPickerVisible && _selectedMessages.isEmpty && !_focusNode.hasFocus,
+      canPop: !_isPickerVisible && _selectedMessages.isEmpty,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_selectedMessages.isNotEmpty) {
           setState(() => _selectedMessages.clear());
           return;
         }
-        if (_focusNode.hasFocus) {
-          _focusNode.unfocus();
-          return;
-        }
         if (_isPickerVisible) {
           setState(() => _isPickerVisible = false);
           return;
+        }
+        if (_focusNode.hasFocus) {
+          _focusNode.unfocus();
+        }
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
         }
       },
       child: Scaffold(
@@ -568,6 +573,21 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             : AppBar(
                 backgroundColor: const Color(0xFF121212),
                 foregroundColor: Colors.white,
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                  tooltip: 'Atrás',
+                  onPressed: () {
+                    if (_focusNode.hasFocus) {
+                      _focusNode.unfocus();
+                    }
+                    if (_isPickerVisible) {
+                      setState(() => _isPickerVisible = false);
+                    }
+                    if (Navigator.of(context).canPop()) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                ),
                 titleSpacing: 0,
                 title: InkWell(
                   onTap: () async {
