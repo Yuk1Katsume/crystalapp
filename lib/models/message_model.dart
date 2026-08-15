@@ -131,6 +131,9 @@ class GroupModel {
   final List<String> memberIds;
   final String adminId;
   final DateTime createdAt;
+  final String? wallpaperColor;
+  final String? wallpaperImage;
+  final double? wallpaperOpacity;
 
   GroupModel({
     required this.id,
@@ -140,6 +143,9 @@ class GroupModel {
     required this.memberIds,
     required this.adminId,
     required this.createdAt,
+    this.wallpaperColor,
+    this.wallpaperImage,
+    this.wallpaperOpacity,
   });
 
   Map<String, dynamic> toJson() {
@@ -151,6 +157,9 @@ class GroupModel {
       'memberIds': memberIds,
       'adminId': adminId,
       'createdAt': createdAt.toIso8601String(),
+      'wallpaperColor': wallpaperColor,
+      'wallpaperImage': wallpaperImage,
+      'wallpaperOpacity': wallpaperOpacity,
     };
   }
 
@@ -167,6 +176,9 @@ class GroupModel {
           : (json['created_at'] != null
               ? DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now()
               : DateTime.now()),
+      wallpaperColor: json['wallpaperColor'] as String?,
+      wallpaperImage: json['wallpaperImage'] as String?,
+      wallpaperOpacity: (json['wallpaperOpacity'] as num?)?.toDouble(),
     );
   }
 }

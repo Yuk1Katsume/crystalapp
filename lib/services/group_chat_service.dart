@@ -428,6 +428,9 @@ class GroupChatService {
     String? description,
     String? iconUrl,
     String? oldIconUrl,
+    String? wallpaperColor,
+    String? wallpaperImage,
+    double? wallpaperOpacity,
   }) async {
     try {
       final currentUid = _auth.currentUser?.uid ?? '';
@@ -435,6 +438,9 @@ class GroupChatService {
       if (name != null) updates['name'] = name;
       if (description != null) updates['description'] = description;
       if (iconUrl != null) updates['iconUrl'] = iconUrl;
+      if (wallpaperColor != null) updates['wallpaperColor'] = wallpaperColor;
+      if (wallpaperImage != null) updates['wallpaperImage'] = wallpaperImage;
+      if (wallpaperOpacity != null) updates['wallpaperOpacity'] = wallpaperOpacity;
 
       // 1. Fetch current details or prepare local fallback
       final group = await getGroupDetails(groupId);
@@ -446,6 +452,9 @@ class GroupChatService {
         memberIds: group?.memberIds ?? [currentUid],
         adminId: group?.adminId ?? currentUid,
         createdAt: group?.createdAt ?? DateTime.now(),
+        wallpaperColor: wallpaperColor ?? group?.wallpaperColor,
+        wallpaperImage: wallpaperImage ?? group?.wallpaperImage,
+        wallpaperOpacity: wallpaperOpacity ?? group?.wallpaperOpacity,
       );
 
       // 2. Broadcast immediately to Supabase GLOBAL_GROUPS in parallel

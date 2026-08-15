@@ -22,6 +22,7 @@ import '../widgets/adaptive_image_bubble.dart';
 import '../widgets/voice_recording_bar.dart';
 import '../widgets/voice_message_bubble.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/voice_note_service.dart';
 
 class Sticker {
@@ -251,6 +252,36 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   StreamSubscription? _groupMetaSub;
   String _currentTitle = '';
   bool _isMemberOfGroup = true;
+  String? _wallpaperColorHex;
+  String? _wallpaperImageUrl;
+  double _wallpaperOpacity = 1.0;
+
+  void _loadWallpaper() async {
+    if (isGroup && widget.groupId != null) {
+      final grp = await _groupService.getGroupDetails(widget.groupId!);
+      if (grp != null && mounted) {
+        setState(() {
+          _wallpaperColorHex = grp.wallpaperColor;
+          _wallpaperImageUrl = grp.wallpaperImage;
+          _wallpaperOpacity = grp.wallpaperOpacity ?? 1.0;
+        });
+      }
+    } else if (!isGroup && widget.recipientId != null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final color = prefs.getString('chat_wp_color_${widget.recipientId}');
+        final img = prefs.getString('chat_wp_img_${widget.recipientId}');
+        final op = prefs.getDouble('chat_wp_op_${widget.recipientId}') ?? 1.0;
+        if (mounted) {
+          setState(() {
+            _wallpaperColorHex = color;
+            _wallpaperImageUrl = img;
+            _wallpaperOpacity = op;
+          });
+        }
+      } catch (_) {}
+    }
+  }
 
   void _subscribeToPresence() {
     if (isGroup || widget.recipientId == null) return;
@@ -294,6 +325,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         if (map['iconUrl'] != null && map['iconUrl'].toString().isNotEmpty) {
                           _recipientAvatarUrl = map['iconUrl'].toString();
                         }
+                        _wallpaperColorHex = map['wallpaperColor'] as String?;
+                        _wallpaperImageUrl = map['wallpaperImage'] as String?;
+                        _wallpaperOpacity = (map['wallpaperOpacity'] as num?)?.toDouble() ?? 1.0;
                       });
                     }
                   }
@@ -316,6 +350,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     });
     _focusNode.addListener(_onFocusChange);
     _fetchRecipientAvatar();
+    _loadWallpaper();
     _subscribeToPresence();
     _subscribeToGroupMetadata();
     _subscribeToMessages();
@@ -816,6 +851,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                             ),
                           );
                         }
+                      } else if (val == 'wallpaper') {
+                        _openWallpaperDialog();
                       } else if (val == 'clear') {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
@@ -837,6 +874,16 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         ),
                       ),
                       const PopupMenuItem(
+                        value: 'wallpaper',
+                        child: Row(
+                          children: [
+                            Icon(Icons.wallpaper_rounded, color: Colors.white70, size: 18),
+                            SizedBox(width: 10),
+                            Text('Fondo de pantalla', style: TextStyle(color: Colors.white)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
                         value: 'clear',
                         child: Row(
                           children: [
@@ -850,14 +897,42 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   ),
                 ],
               ),
-        body: Column(
+        body: Stack(
           children: [
-            Expanded(child: _buildMessageList()),
-            if (_replyingToMessage != null) _buildReplyPreview(),
-            if (isGroup && !_isMemberOfGroup)
-              SafeArea(
-                top: false,
-                child: Container(
+            // Background Wallpaper Layer
+            Positioned.fill(
+              child: Container(
+                color: _wallpaperColorHex != null && _wallpaperColorHex!.isNotEmpty
+                    ? Color(int.parse(_wallpaperColorHex!.replaceAll('#', '0xFF')))
+                    : const Color(0xFF0A0A0A),
+                child: _wallpaperImageUrl != null && _wallpaperImageUrl!.isNotEmpty
+                    ? Opacity(
+                        opacity: _wallpaperOpacity.clamp(0.0, 1.0),
+                        child: _wallpaperImageUrl!.startsWith('http')
+                            ? Image.network(
+                                _wallpaperImageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const SizedBox(),
+                              )
+                            : Image.file(
+                                File(_wallpaperImageUrl!),
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const SizedBox(),
+                              ),
+                      )
+                    : null,
+              ),
+            ),
+
+            // Main Chat Content
+            Column(
+              children: [
+                Expanded(child: _buildMessageList()),
+                if (_replyingToMessage != null) _buildReplyPreview(),
+                if (isGroup && !_isMemberOfGroup)
+                  SafeArea(
+                    top: false,
+                    child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   margin: const EdgeInsets.fromLTRB(12, 6, 12, 10),
@@ -925,8 +1000,10 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
               ),
           ],
         ),
-      ),
-    );
+      ],
+    ),
+  ),
+);
   }
 
   Widget _buildReplyPreview() {
@@ -2134,6 +2211,249 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       _refreshMessages();
       _scrollToBottom();
     }
+  }
+
+  void _openWallpaperDialog() {
+    double tempOpacity = _wallpaperOpacity;
+    String? tempColor = _wallpaperColorHex;
+    String? tempImage = _wallpaperImageUrl;
+
+    final List<String> presetColors = [
+      '#0A0A0A', // Default dark
+      '#1A1A2E', // Navy Midnight
+      '#16213E', // Deep Blue
+      '#0F3460', // Royal Slate
+      '#1B262C', // Dark Cyan
+      '#2C061F', // Wine Dark
+      '#1E2022', // Charcoal
+      '#121B22', // WhatsApp Dark Green
+      '#221F3B', // Deep Purple
+      '#3A001E', // Crimson Dark
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF141414),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Icon(Icons.wallpaper_rounded, color: isGroup ? Colors.deepPurpleAccent : const Color(0xFFFF1744)),
+                      const SizedBox(width: 10),
+                      Text(
+                        isGroup ? 'Fondo del grupo (Compartido)' : 'Fondo del chat',
+                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Colors row
+                  const Text('Colores sólidos', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 46,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: presetColors.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 10),
+                      itemBuilder: (ctx, i) {
+                        final hex = presetColors[i];
+                        final c = Color(int.parse(hex.replaceAll('#', '0xFF')));
+                        final isSel = (tempColor == hex);
+                        return GestureDetector(
+                          onTap: () {
+                            setModalState(() {
+                              tempColor = hex;
+                            });
+                          },
+                          child: Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: c,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isSel ? const Color(0xFFFF1744) : Colors.white24,
+                                width: isSel ? 3 : 1,
+                              ),
+                            ),
+                            child: isSel ? const Icon(Icons.check, color: Colors.white, size: 20) : null,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Image Picker Button
+                  const Text('Foto de fondo', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF242424),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.photo_library_rounded, color: Color(0xFFFF1744), size: 20),
+                        label: const Text('Elegir de la galería'),
+                        onPressed: () async {
+                          final picker = ImagePicker();
+                          final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+                          if (picked != null) {
+                            if (isGroup && widget.groupId != null) {
+                              // Upload to Supabase storage for group
+                              final uploadedUrl = await _groupService.uploadGroupIcon(
+                                widget.groupId!,
+                                File(picked.path),
+                              );
+                              setModalState(() {
+                                tempImage = uploadedUrl ?? picked.path;
+                              });
+                            } else {
+                              setModalState(() {
+                                tempImage = picked.path;
+                              });
+                            }
+                          }
+                        },
+                      ),
+                      if (tempImage != null && tempImage!.isNotEmpty) ...[
+                        const SizedBox(width: 12),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                          tooltip: 'Quitar foto',
+                          onPressed: () => setModalState(() => tempImage = null),
+                        ),
+                      ],
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Opacity Slider
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Opacidad del fondo', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                      Text('${(tempOpacity * 100).round()}%', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  Slider(
+                    value: tempOpacity,
+                    min: 0.1,
+                    max: 1.0,
+                    divisions: 18,
+                    activeColor: const Color(0xFFFF1744),
+                    inactiveColor: Colors.white24,
+                    onChanged: (val) {
+                      setModalState(() {
+                        tempOpacity = val;
+                      });
+                    },
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: const BorderSide(color: Colors.white24),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('Cancelar'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFF1744),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+
+                            setState(() {
+                              _wallpaperColorHex = tempColor;
+                              _wallpaperImageUrl = tempImage;
+                              _wallpaperOpacity = tempOpacity;
+                            });
+
+                            if (isGroup && widget.groupId != null) {
+                              // Save in group for everyone
+                              await _groupService.updateGroupInfo(
+                                groupId: widget.groupId!,
+                                wallpaperColor: tempColor,
+                                wallpaperImage: tempImage,
+                                wallpaperOpacity: tempOpacity,
+                              );
+                            } else if (!isGroup && widget.recipientId != null) {
+                              // Save locally for this user
+                              final prefs = await SharedPreferences.getInstance();
+                              if (tempColor != null) {
+                                await prefs.setString('chat_wp_color_${widget.recipientId}', tempColor!);
+                              } else {
+                                await prefs.remove('chat_wp_color_${widget.recipientId}');
+                              }
+                              if (tempImage != null) {
+                                await prefs.setString('chat_wp_img_${widget.recipientId}', tempImage!);
+                              } else {
+                                await prefs.remove('chat_wp_img_${widget.recipientId}');
+                              }
+                              await prefs.setDouble('chat_wp_op_${widget.recipientId}', tempOpacity);
+                            }
+
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  backgroundColor: Color(0xFF1E1E1E),
+                                  content: Text('Fondo de pantalla actualizado ✨', style: TextStyle(color: Colors.white)),
+                                ),
+                              );
+                            }
+                          },
+                          child: const Text('Aplicar Fondo', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _showCreatePollDialog() {
