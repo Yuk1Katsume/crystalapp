@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/contacts_service.dart';
@@ -25,6 +26,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final Map<String, String> _selectedUserNames = {};
   final Map<String, String?> _selectedUserAvatars = {};
 
+  File? _groupImageFile;
   bool _isLoading = true;
   bool _isCreating = false;
 
@@ -39,6 +41,15 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     _groupNameController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    final picked = await _groupService.pickImage();
+    if (picked != null) {
+      setState(() {
+        _groupImageFile = File(picked.path);
+      });
+    }
   }
 
   Future<void> _loadUsersAndContacts() async {
@@ -116,6 +127,12 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         memberIds: allMembers,
       );
 
+      if (group != null && _groupImageFile != null) {
+        try {
+          await _groupService.uploadGroupIcon(group.id, _groupImageFile!);
+        } catch (_) {}
+      }
+
       if (mounted) {
         setState(() => _isCreating = false);
         if (group != null) {
@@ -173,10 +190,30 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                   color: const Color(0xFF141414),
                   child: Row(
                     children: [
-                      const CircleAvatar(
-                        radius: 26,
-                        backgroundColor: Colors.deepPurpleAccent,
-                        child: Icon(Icons.group_rounded, color: Colors.white, size: 28),
+                      GestureDetector(
+                        onTap: _pickImage,
+                        child: CircleAvatar(
+                          radius: 26,
+                          backgroundColor: const Color(0xFF262626),
+                          backgroundImage: _groupImageFile != null ? FileImage(_groupImageFile!) : null,
+                          child: _groupImageFile == null
+                              ? const Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Icon(Icons.group_rounded, color: Colors.white54, size: 26),
+                                    Positioned(
+                                      bottom: 0,
+                                      right: 0,
+                                      child: CircleAvatar(
+                                        radius: 9,
+                                        backgroundColor: Color(0xFFFF1744),
+                                        child: Icon(Icons.camera_alt_rounded, color: Colors.white, size: 10),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : null,
+                        ),
                       ),
                       const SizedBox(width: 14),
                       Expanded(

@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 import '../models/message_model.dart';
 import 'chat_service.dart';
 import 'e2ee_service.dart';
+import 'local_database_service.dart';
 import 'supabase_config.dart';
 import 'voice_note_service.dart';
 
@@ -14,6 +17,7 @@ class GroupChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final ImagePicker _picker = ImagePicker();
+  final LocalDatabaseService _localDb = LocalDatabaseService();
 
   /// Create a new group chat with multi-backend resilience
   Future<GroupModel?> createGroup({
@@ -394,7 +398,7 @@ class GroupChatService {
     return await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
   }
 
-  /// Upload group icon to Supabase Storage
+  /// Upload group icon to Supabase Storage and broadcast to Supabase + Firestore
   Future<String?> uploadGroupIcon(String groupId, File imageFile) async {
     try {
       final bytes = await imageFile.readAsBytes();
@@ -410,13 +414,37 @@ class GroupChatService {
           .getPublicUrl(fileName);
 
       await _firestore.collection('groups').doc(groupId).update({'iconUrl': publicUrl});
+
+      final group = await getGroupDetails(groupId);
+      if (group != null) {
+        final updatedGroup = GroupModel(
+          id: group.id,
+          name: group.name,
+          description: group.description,
+          iconUrl: publicUrl,
+          memberIds: group.memberIds,
+          adminId: group.adminId,
+          createdAt: group.createdAt,
+        );
+        try {
+          await SupabaseConfig.client.from('messages').insert({
+            'sender_id': _auth.currentUser?.uid ?? '',
+            'recipient_id': 'ALL',
+            'group_id': 'GLOBAL_GROUPS',
+            'message_type': 'group_metadata',
+            'encrypted_content': jsonEncode(updatedGroup.toJson()),
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        } catch (_) {}
+      }
+
       return publicUrl;
     } catch (e) {
       return null;
     }
   }
 
-  /// Send encrypted group message
+  /// Send encrypted group message to all members and group stream
   Future<void> sendGroupMessage({
     required String groupId,
     required String text,
@@ -425,18 +453,213 @@ class GroupChatService {
     int? audioDurationSeconds,
     List<double>? waveformSamples,
   }) async {
-    await ChatService().sendDirectMessage(
+    final currentUid = _auth.currentUser?.uid ?? '';
+    if (currentUid.isEmpty) return;
+
+    final msgId = const Uuid().v4();
+    final now = DateTime.now();
+
+    // 1. Get group details to know member IDs
+    final group = await getGroupDetails(groupId);
+    final memberIds = group?.memberIds ?? [];
+
+    // 2. Prepare payload & E2EE encryption using shared groupId
+    String messageType = type.name;
+    String encryptedContent;
+
+    final isAudio = type == ChatMessageType.audio ||
+        (mediaUrl != null && (mediaUrl.endsWith('.m4a') || mediaUrl.endsWith('.aac')));
+    final isImage = type == ChatMessageType.image && mediaUrl != null && !mediaUrl.startsWith('http');
+
+    if (isAudio && mediaUrl != null) {
+      messageType = 'audio';
+      final file = File(mediaUrl);
+      if (await file.exists()) {
+        final audioBytes = await file.readAsBytes();
+        final encAudio = E2EEService.encryptBytes(audioBytes, groupId);
+        final base64Audio = base64Encode(encAudio);
+        if (waveformSamples != null && waveformSamples.isNotEmpty) {
+          final wfString = waveformSamples.map((e) => e.toStringAsFixed(2)).join(',');
+          final encWf = base64Encode(utf8.encode(wfString));
+          encryptedContent = 'AUDENC_WF:$encWf:$base64Audio';
+        } else {
+          encryptedContent = 'AUDENC:$base64Audio';
+        }
+      } else {
+        encryptedContent = E2EEService.encryptPayload(text, groupId);
+      }
+    } else if (isImage && mediaUrl != null) {
+      messageType = 'image';
+      final file = File(mediaUrl);
+      if (await file.exists()) {
+        final imgBytes = await file.readAsBytes();
+        final encImg = E2EEService.encryptBytes(imgBytes, groupId);
+        final base64Img = base64Encode(encImg);
+        encryptedContent = 'IMGENC:$base64Img';
+      } else {
+        encryptedContent = E2EEService.encryptPayload(text, groupId);
+      }
+    } else if (type == ChatMessageType.sticker && mediaUrl != null) {
+      messageType = 'sticker';
+      encryptedContent = E2EEService.encryptPayload(mediaUrl, groupId);
+    } else {
+      encryptedContent = E2EEService.encryptPayload(text, groupId);
+    }
+
+    // 3. Save locally in SQLite for current user
+    await _localDb.saveLocalMessage(
+      id: msgId,
+      senderId: currentUid,
       recipientId: groupId,
+      groupId: groupId,
       text: text,
-      type: type,
+      messageType: messageType,
       mediaUrl: mediaUrl,
       audioDurationSeconds: audioDurationSeconds,
-      waveformSamples: waveformSamples,
+      audioWaveform: waveformSamples?.map((e) => e.toStringAsFixed(2)).join(','),
+      createdAt: now,
+      isRead: true,
+      status: 'sent',
     );
+
+    // 4. Send targeted row to each group member so their incoming listener receives it
+    for (final memberId in memberIds) {
+      if (memberId == currentUid) continue;
+      try {
+        await SupabaseConfig.client.from('messages').insert({
+          'sender_id': currentUid,
+          'recipient_id': memberId,
+          'group_id': groupId,
+          'message_type': messageType,
+          'encrypted_content': encryptedContent,
+          'created_at': now.toIso8601String(),
+        });
+      } catch (_) {}
+    }
+
+    // 5. Also send 1 row for real-time group stream listeners
+    try {
+      await SupabaseConfig.client.from('messages').insert({
+        'sender_id': currentUid,
+        'recipient_id': 'GROUP_$groupId',
+        'group_id': groupId,
+        'message_type': messageType,
+        'encrypted_content': encryptedContent,
+        'created_at': now.toIso8601String(),
+      });
+    } catch (_) {}
   }
 
-  /// Stream group messages
+  /// Stream group messages from local SQLite + real-time Supabase
   Stream<List<Message>> getGroupMessages(String groupId) {
-    return ChatService().getChatMessagesWithUser(groupId);
+    final controller = StreamController<List<Message>>.broadcast();
+    final currentUid = _auth.currentUser?.uid ?? '';
+
+    // 1. Emit local SQLite history immediately
+    _localDb.getLocalMessages(groupId).then((localMsgs) {
+      if (!controller.isClosed) controller.add(localMsgs);
+    });
+
+    // 2. Listen to real-time incoming messages for this group in Supabase
+    final subscription = SupabaseConfig.client
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .eq('group_id', groupId)
+        .order('created_at', ascending: true)
+        .listen((data) async {
+          bool hasNewIncoming = false;
+
+          for (var item in data) {
+            final senderId = item['sender_id'];
+            if (senderId == currentUid) continue; // Skip own messages
+
+            final msgId = item['id'].toString();
+            final encryptedContent = item['encrypted_content'] as String? ?? '';
+            final messageType = item['message_type'] ?? 'text';
+
+            if (messageType == 'group_metadata' || messageType == 'call_signal' || messageType == 'call_candidate') {
+              continue;
+            }
+
+            String decryptedText;
+            String? localMediaPath;
+            String? embeddedWaveform;
+
+            final isImg = messageType == 'image' || encryptedContent.startsWith('IMGENC:');
+            final isAud = messageType == 'audio' || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:');
+
+            if (isImg && encryptedContent.startsWith('IMGENC:')) {
+              decryptedText = '📷 Imagen';
+              localMediaPath = await ChatService().extractAndSaveEmbeddedImage(encryptedContent, msgId, groupId);
+            } else if (isAud && (encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:'))) {
+              decryptedText = '🎤 Mensaje de voz';
+              localMediaPath = await ChatService().extractAndSaveEmbeddedAudio(encryptedContent, msgId, groupId);
+              if (encryptedContent.startsWith('AUDENC_WF:')) {
+                final parts = encryptedContent.split(':');
+                if (parts.length >= 3) {
+                  try {
+                    embeddedWaveform = utf8.decode(base64Decode(parts[1]));
+                  } catch (_) {}
+                }
+              }
+            } else if (messageType == 'sticker') {
+              decryptedText = '🎨 Sticker';
+              localMediaPath = E2EEService.decryptPayload(encryptedContent, groupId);
+            } else {
+              decryptedText = E2EEService.decryptPayload(encryptedContent, groupId);
+            }
+
+            // Resolve sender name and avatar from Supabase users
+            String? senderName;
+            String? senderAvatar;
+            try {
+              final userRow = await SupabaseConfig.client
+                  .from('users')
+                  .select('display_name, username, avatar_url')
+                  .eq('id', senderId)
+                  .maybeSingle();
+              if (userRow != null) {
+                senderName = userRow['display_name'] ?? userRow['username'];
+                senderAvatar = userRow['avatar_url'];
+              }
+            } catch (_) {}
+
+            await _localDb.saveLocalMessage(
+              id: msgId,
+              senderId: senderId,
+              senderName: senderName,
+              senderAvatar: senderAvatar,
+              recipientId: groupId,
+              groupId: groupId,
+              text: decryptedText,
+              messageType: isAud ? 'audio' : (isImg ? 'image' : messageType),
+              mediaUrl: localMediaPath,
+              audioWaveform: embeddedWaveform,
+              createdAt: DateTime.tryParse(item['created_at']?.toString() ?? '') ?? DateTime.now(),
+              isRead: false,
+              status: 'delivered',
+            );
+
+            // Delete targeted row if explicitly addressed to current user
+            if (item['recipient_id'] == currentUid) {
+              try {
+                await SupabaseConfig.client.from('messages').delete().eq('id', item['id']);
+              } catch (_) {}
+            }
+
+            hasNewIncoming = true;
+          }
+
+          if (hasNewIncoming) {
+            final updatedLocalMsgs = await _localDb.getLocalMessages(groupId);
+            if (!controller.isClosed) controller.add(updatedLocalMsgs);
+          }
+        });
+
+    controller.onCancel = () {
+      subscription.cancel();
+    };
+
+    return controller.stream;
   }
 }

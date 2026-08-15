@@ -616,7 +616,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildGroupTile(GroupModel group) {
-    final hasIcon = group.iconUrl != null && group.iconUrl!.isNotEmpty;
+    final hasIcon = group.iconUrl != null &&
+        group.iconUrl!.isNotEmpty &&
+        group.iconUrl!.startsWith('http');
 
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -625,7 +627,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         backgroundColor: const Color(0xFF1E1E1E),
         backgroundImage: hasIcon ? NetworkImage(group.iconUrl!) : null,
         child: !hasIcon
-            ? const Icon(Icons.groups_rounded, color: Colors.white70, size: 26)
+            ? Container(
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF2C2C2E), Color(0xFF1C1C1E)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: const Center(
+                  child: Icon(Icons.groups_rounded, color: Colors.white70, size: 26),
+                ),
+              )
             : null,
       ),
       title: Text(

@@ -71,10 +71,10 @@ class ChatService {
 
             if (isImg && (encryptedContent.startsWith(_imgPayloadPrefix) || encryptedContent.startsWith('IMGENC:'))) {
               decryptedText = '📷 Imagen';
-              localMediaPath = await _extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
+              localMediaPath = await extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
             } else if (isAud && (encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:') || encryptedContent.startsWith('AUDENC_URL:'))) {
               decryptedText = '🎤 Mensaje de voz';
-              localMediaPath = await _extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
+              localMediaPath = await extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
               if (encryptedContent.startsWith('AUDENC_WF:')) {
                 final parts = encryptedContent.split(':');
                 if (parts.length >= 3) {
@@ -90,9 +90,26 @@ class ChatService {
               decryptedText = E2EEService.decryptPayload(encryptedContent, chatId);
             }
 
+            // Resolve sender name and avatar
+            String? senderName;
+            String? senderAvatar;
+            try {
+              final userRow = await _supabase
+                  .from('users')
+                  .select('display_name, username, avatar_url')
+                  .eq('id', senderId)
+                  .maybeSingle();
+              if (userRow != null) {
+                senderName = userRow['display_name'] ?? userRow['username'];
+                senderAvatar = userRow['avatar_url'];
+              }
+            } catch (_) {}
+
             await _localDb.saveLocalMessage(
               id: msgId,
               senderId: senderId,
+              senderName: senderName,
+              senderAvatar: senderAvatar,
               recipientId: currentUserId,
               groupId: chatId,
               text: decryptedText,
@@ -156,11 +173,11 @@ class ChatService {
             if (isImg && (encryptedContent.startsWith(_imgPayloadPrefix) || encryptedContent.startsWith('IMGENC:'))) {
               // Image is embedded in the payload as encrypted base64
               decryptedText = '📷 Imagen';
-              localMediaPath = await _extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
+              localMediaPath = await extractAndSaveEmbeddedImage(encryptedContent, msgId, chatId);
             } else if (isAud && (encryptedContent.startsWith(_audioPayloadPrefix) || encryptedContent.startsWith('AUDENC_WF:') || encryptedContent.startsWith('AUDENC:') || encryptedContent.startsWith('AUDENC_URL:'))) {
               // Voice note is encrypted with E2EE
               decryptedText = '🎤 Mensaje de voz';
-              localMediaPath = await _extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
+              localMediaPath = await extractAndSaveEmbeddedAudio(encryptedContent, msgId, chatId);
               if (encryptedContent.startsWith('AUDENC_WF:')) {
                 final parts = encryptedContent.split(':');
                 if (parts.length >= 3) {
@@ -213,7 +230,7 @@ class ChatService {
   }
 
   /// Decodes and saves an embedded encrypted image payload to local storage
-  Future<String?> _extractAndSaveEmbeddedImage(
+  Future<String?> extractAndSaveEmbeddedImage(
       String payload, String msgId, String chatId) async {
     try {
       final base64Data = payload.substring(_imgPayloadPrefix.length);
@@ -230,7 +247,7 @@ class ChatService {
   }
 
   /// Decodes and saves an embedded encrypted audio payload to local storage
-  Future<String?> _extractAndSaveEmbeddedAudio(
+  Future<String?> extractAndSaveEmbeddedAudio(
       String payload, String msgId, String chatId) async {
     try {
       Uint8List? encryptedBytes;

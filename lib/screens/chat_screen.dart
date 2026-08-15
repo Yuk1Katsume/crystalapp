@@ -379,14 +379,50 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _refreshMessages();
   }
 
+  final Map<String, Map<String, dynamic>> _groupMembers = {};
+
+  static const List<Color> _memberColors = [
+    Color(0xFF00E676), // Bright Green
+    Color(0xFF00B0FF), // Bright Sky Blue
+    Color(0xFFFF9100), // Vibrant Orange
+    Color(0xFFE040FB), // Vibrant Purple
+    Color(0xFFFFD600), // Vibrant Yellow
+    Color(0xFF1DE9B6), // Teal
+    Color(0xFFFF5252), // Coral Red
+    Color(0xFF7C4DFF), // Deep Violet
+    Color(0xFF69F0AE), // Mint Green
+    Color(0xFFFF4081), // Neon Pink
+    Color(0xFF40C4FF), // Cyan
+    Color(0xFFFFAB40), // Amber
+  ];
+
+  Color _getMemberColor(String uid) {
+    if (uid.isEmpty) return const Color(0xFFFF1744);
+    final hash = uid.codeUnits.fold<int>(0, (prev, elem) => prev + elem);
+    return _memberColors[hash % _memberColors.length];
+  }
+
   void _fetchRecipientAvatar() async {
     if (isGroup && widget.groupId != null) {
       try {
         final grp = await _groupService.getGroupDetails(widget.groupId!);
-        if (grp != null && grp.iconUrl != null && grp.iconUrl!.isNotEmpty && mounted) {
-          setState(() {
-            _recipientAvatarUrl = grp.iconUrl;
-          });
+        if (grp != null) {
+          if (grp.iconUrl != null && grp.iconUrl!.isNotEmpty && mounted) {
+            setState(() {
+              _recipientAvatarUrl = grp.iconUrl;
+            });
+          }
+          if (grp.memberIds.isNotEmpty) {
+            final List<dynamic> users = await SupabaseConfig.client
+                .from('users')
+                .select('id, username, display_name, avatar_url')
+                .filter('id', 'in', grp.memberIds);
+            for (final u in users) {
+              final uid = u['id']?.toString() ?? '';
+              _groupMembers[uid] = Map<String, dynamic>.from(u as Map);
+            }
+            if (mounted) setState(() {});
+          }
         }
       } catch (_) {}
       return;
@@ -1055,6 +1091,15 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       );
     }
 
+    final member = isGroup ? _groupMembers[msg.senderId] : null;
+    final senderDisplayName = isGroup
+        ? (msg.senderName ?? member?['display_name'] ?? member?['username'] ?? 'Miembro')
+        : (msg.senderName ?? widget.recipientName ?? 'Contacto');
+    final senderAvatarUrl = isGroup
+        ? (msg.senderAvatar ?? member?['avatar_url'])
+        : _recipientAvatarUrl;
+    final senderColor = isGroup ? _getMemberColor(msg.senderId) : Colors.amberAccent;
+
     Color bubbleColor;
     if (isSelected) {
       bubbleColor = isMe ? const Color(0xFFB71C1C) : const Color(0xFF263238);
@@ -1062,125 +1107,159 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       bubbleColor = isMe ? const Color(0xFFFF1744) : const Color(0xFF1E1E1E);
     }
 
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 2),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          border: isSelected ? Border.all(color: const Color(0xFFFF1744), width: 2.0) : null,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isMe ? 16 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 16),
-          ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isGroup && !isMe && msg.senderName != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  msg.senderName!,
-                  style: const TextStyle(
-                    color: Colors.amberAccent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            if (msg.type == ChatMessageType.image && msg.mediaUrl != null) ...[
-              AdaptiveImageBubble(
-                mediaUrl: msg.mediaUrl!,
-                onTap: () {
-                  if (_selectedMessages.isNotEmpty) {
-                    _toggleMessageSelection(msg);
-                    return;
-                  }
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ImageViewerScreen(
-                        imagePathOrUrl: msg.mediaUrl!,
-                        message: msg,
-                        senderName: isGroup ? msg.senderName : (isMe ? 'Tú' : (widget.recipientName ?? 'Contacto')),
-                        onReply: () {
-                          setState(() {
-                            _replyingToMessage = msg;
-                          });
-                        },
-                        onForward: () {
-                          _selectedMessages.clear();
-                          _selectedMessages.add(msg);
-                          _forwardSelectedMessages();
-                        },
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (msg.isStarred) ...[
-                    const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
-                    const SizedBox(width: 3),
-                  ],
-                  Text(
-                    '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 10),
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 4),
-                    _buildStatusIcon(msg),
-                  ],
-                ],
-              ),
-            ] else ...[
-              // WhatsApp style auto-adjusting bubble (tight wrapper)
-              Wrap(
-                alignment: WrapAlignment.end,
-                crossAxisAlignment: WrapCrossAlignment.end,
-                spacing: 8,
-                runSpacing: 2,
-                children: [
-                  Text(
-                    msg.text,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (msg.isStarred) ...[
-                          const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
-                          const SizedBox(width: 3),
-                        ],
-                        Text(
-                          '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
-                          style: const TextStyle(color: Colors.white70, fontSize: 10),
-                        ),
-                        if (isMe) ...[
-                          const SizedBox(width: 4),
-                          _buildStatusIcon(msg),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ],
+    final bubbleBody = Container(
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.74),
+      decoration: BoxDecoration(
+        color: bubbleColor,
+        border: isSelected ? Border.all(color: const Color(0xFFFF1744), width: 2.0) : null,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: Radius.circular(isMe ? 16 : 4),
+          bottomRight: Radius.circular(isMe ? 4 : 16),
         ),
       ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isGroup && !isMe)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                senderDisplayName,
+                style: TextStyle(
+                  color: senderColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          if (msg.type == ChatMessageType.image && msg.mediaUrl != null) ...[
+            AdaptiveImageBubble(
+              mediaUrl: msg.mediaUrl!,
+              onTap: () {
+                if (_selectedMessages.isNotEmpty) {
+                  _toggleMessageSelection(msg);
+                  return;
+                }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ImageViewerScreen(
+                      imagePathOrUrl: msg.mediaUrl!,
+                      message: msg,
+                      senderName: isGroup ? senderDisplayName : (isMe ? 'Tú' : (widget.recipientName ?? 'Contacto')),
+                      onReply: () {
+                        setState(() {
+                          _replyingToMessage = msg;
+                        });
+                      },
+                      onForward: () {
+                        _selectedMessages.clear();
+                        _selectedMessages.add(msg);
+                        _forwardSelectedMessages();
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (msg.isStarred) ...[
+                  const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
+                  const SizedBox(width: 3),
+                ],
+                Text(
+                  '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 10),
+                ),
+                if (isMe) ...[
+                  const SizedBox(width: 4),
+                  _buildStatusIcon(msg),
+                ],
+              ],
+            ),
+          ] else ...[
+            // WhatsApp style auto-adjusting bubble (tight wrapper)
+            Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              spacing: 8,
+              runSpacing: 2,
+              children: [
+                Text(
+                  msg.text,
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (msg.isStarred) ...[
+                        const Icon(Icons.star_rounded, size: 12, color: Colors.amberAccent),
+                        const SizedBox(width: 3),
+                      ],
+                      Text(
+                        '${msg.timestamp.hour.toString().padLeft(2, '0')}:${msg.timestamp.minute.toString().padLeft(2, '0')}',
+                        style: const TextStyle(color: Colors.white70, fontSize: 10),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 4),
+                        _buildStatusIcon(msg),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+
+    if (isGroup && !isMe) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(right: 6, bottom: 4),
+                child: CircleAvatar(
+                  radius: 14,
+                  backgroundColor: senderColor.withOpacity(0.25),
+                  backgroundImage: (senderAvatarUrl != null && senderAvatarUrl.toString().startsWith('http'))
+                      ? NetworkImage(senderAvatarUrl)
+                      : null,
+                  child: (senderAvatarUrl == null || !senderAvatarUrl.toString().startsWith('http'))
+                      ? Text(
+                          senderDisplayName.isNotEmpty ? senderDisplayName[0].toUpperCase() : '?',
+                          style: TextStyle(color: senderColor, fontWeight: FontWeight.bold, fontSize: 11),
+                        )
+                      : null,
+                ),
+              ),
+              bubbleBody,
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: bubbleBody,
     );
   }
 

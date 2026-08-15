@@ -22,12 +22,14 @@ class LocalDatabaseService {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_messages (
             id TEXT PRIMARY KEY,
             sender_id TEXT,
+            sender_name TEXT,
+            sender_avatar TEXT,
             recipient_id TEXT,
             group_id TEXT,
             text TEXT,
@@ -116,6 +118,14 @@ class LocalDatabaseService {
             ''');
           } catch (_) {}
         }
+        if (oldVersion < 8) {
+          try {
+            await db.execute('ALTER TABLE local_messages ADD COLUMN sender_name TEXT');
+          } catch (_) {}
+          try {
+            await db.execute('ALTER TABLE local_messages ADD COLUMN sender_avatar TEXT');
+          } catch (_) {}
+        }
       },
     );
   }
@@ -124,6 +134,8 @@ class LocalDatabaseService {
   Future<void> saveLocalMessage({
     required String id,
     required String senderId,
+    String? senderName,
+    String? senderAvatar,
     required String recipientId,
     required String groupId,
     required String text,
@@ -142,6 +154,8 @@ class LocalDatabaseService {
       {
         'id': id,
         'sender_id': senderId,
+        'sender_name': senderName,
+        'sender_avatar': senderAvatar,
         'recipient_id': recipientId,
         'group_id': groupId,
         'text': text,
@@ -285,7 +299,10 @@ class LocalDatabaseService {
     return Message(
       id: item['id'] as String,
       senderId: item['sender_id'] as String,
+      senderName: item['sender_name'] as String?,
+      senderAvatar: item['sender_avatar'] as String?,
       recipientId: item['recipient_id'] as String?,
+      groupId: item['group_id'] as String?,
       text: item['text'] as String,
       timestamp: DateTime.parse(item['created_at'] as String),
       type: type,

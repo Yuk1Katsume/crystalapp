@@ -21,6 +21,7 @@ class Message {
   final DateTime timestamp;
   final String senderId;
   final String? senderName;
+  final String? senderAvatar;
   final String? recipientId;
   final String? groupId;
   final bool isEncrypted;
@@ -50,6 +51,7 @@ class Message {
     required this.timestamp,
     required this.senderId,
     this.senderName,
+    this.senderAvatar,
     this.recipientId,
     this.groupId,
     this.isEncrypted = true,
@@ -69,6 +71,7 @@ class Message {
       'timestamp': timestamp.toIso8601String(),
       'senderId': senderId,
       'senderName': senderName,
+      'senderAvatar': senderAvatar,
       'recipientId': recipientId,
       'groupId': groupId,
       'isEncrypted': isEncrypted,
@@ -91,6 +94,7 @@ class Message {
           : DateTime.now(),
       senderId: json['senderId'] as String? ?? '',
       senderName: json['senderName'] as String?,
+      senderAvatar: json['senderAvatar'] as String?,
       recipientId: json['recipientId'] as String?,
       groupId: json['groupId'] as String?,
       isEncrypted: json['isEncrypted'] as bool? ?? true,

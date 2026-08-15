@@ -710,11 +710,22 @@ class CallService {
         _peerConnection?.addTrack(track, _localStream!);
       });
 
+      _localStream?.getAudioTracks().forEach((track) {
+        track.enabled = true;
+      });
+
       _peerConnection?.onTrack = (event) {
         if (event.streams.isNotEmpty) {
           _remoteStream = event.streams[0];
+          _remoteStream?.getAudioTracks().forEach((track) {
+            track.enabled = true;
+          });
         }
       };
+
+      try {
+        Helper.setSpeakerphoneOn(false);
+      } catch (_) {}
 
       _peerConnection?.onConnectionState = (state) {
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
