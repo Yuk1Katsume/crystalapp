@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/message_model.dart';
 import '../services/auth_service.dart';
 import '../services/contacts_service.dart';
@@ -46,6 +47,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   bool _isLoading = true;
   bool _isUploadingIcon = false;
   StreamSubscription? _metadataSub;
+  StreamSubscription? _firestoreSub;
 
   @override
   void initState() {
@@ -58,10 +60,38 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   @override
   void dispose() {
     _metadataSub?.cancel();
+    _firestoreSub?.cancel();
     super.dispose();
   }
 
   void _listenToGroupRealtimeUpdates() {
+    // 1. Direct Firestore Snapshot stream (0ms instant reactivity)
+    try {
+      _firestoreSub = FirebaseFirestore.instance
+          .collection('groups')
+          .doc(widget.groupId)
+          .snapshots()
+          .listen((snapshot) {
+            if (snapshot.exists && snapshot.data() != null) {
+              try {
+                final updated = GroupModel.fromJson(snapshot.data()!);
+                if (mounted) {
+                  setState(() {
+                    _group = updated;
+                    _groupName = updated.name;
+                    _groupDescription = updated.description;
+                    _groupIconUrl = updated.iconUrl;
+                    _adminId = updated.adminId;
+                    _memberIds = updated.memberIds;
+                  });
+                  _refreshMembersData(updated.memberIds);
+                }
+              } catch (_) {}
+            }
+          }, onError: (_) {});
+    } catch (_) {}
+
+    // 2. Supabase GLOBAL_GROUPS backup stream
     try {
       _metadataSub = SupabaseConfig.client
           .from('messages')

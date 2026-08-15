@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/message_model.dart';
 import '../services/chat_service.dart';
@@ -250,6 +251,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   bool _recipientIsOnline = false;
   StreamSubscription? _presenceSub;
   StreamSubscription? _groupMetaSub;
+  StreamSubscription? _firestoreGroupSub;
   String _currentTitle = '';
   bool _isMemberOfGroup = true;
   String? _wallpaperColorHex;
@@ -302,7 +304,41 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void _subscribeToGroupMetadata() {
     if (!isGroup || widget.groupId == null) return;
     _groupMetaSub?.cancel();
+    _firestoreGroupSub?.cancel();
     final myUid = currentUser?.uid ?? '';
+
+    // 1. Direct Firestore Snapshot stream (0ms instant reactivity)
+    try {
+      _firestoreGroupSub = FirebaseFirestore.instance
+          .collection('groups')
+          .doc(widget.groupId)
+          .snapshots()
+          .listen((snapshot) {
+            if (snapshot.exists && snapshot.data() != null) {
+              try {
+                final map = snapshot.data()!;
+                final members = (map['memberIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+                if (mounted) {
+                  setState(() {
+                    _isMemberOfGroup = members.contains(myUid);
+                    if (map['name'] != null && map['name'].toString().isNotEmpty) {
+                      _currentTitle = map['name'].toString();
+                    }
+                    if (map['iconUrl'] != null && map['iconUrl'].toString().isNotEmpty) {
+                      _recipientAvatarUrl = map['iconUrl'].toString();
+                    }
+                    _wallpaperColorHex = map['wallpaperColor'] as String?;
+                    _wallpaperImageUrl = map['wallpaperImage'] as String?;
+                    _wallpaperOpacity = (map['wallpaperOpacity'] as num?)?.toDouble() ?? 1.0;
+                    _groupMembers.removeWhere((uid, _) => !members.contains(uid));
+                  });
+                }
+              } catch (_) {}
+            }
+          }, onError: (_) {});
+    } catch (_) {}
+
+    // 2. Supabase GLOBAL_GROUPS backup stream
     try {
       _groupMetaSub = SupabaseConfig.client
           .from('messages')
@@ -362,6 +398,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void dispose() {
     _presenceSub?.cancel();
     _groupMetaSub?.cancel();
+    _firestoreGroupSub?.cancel();
     _voiceDurationSub?.cancel();
     _sub?.cancel();
     _uiStreamController.close();
