@@ -44,6 +44,7 @@ class CallService {
 
   final Set<String> _processedCallIds = {};
   final Set<String> _activeRingingCallIds = {};
+  final Map<String, Map<String, dynamic>> _cachedCallData = {};
 
   String get currentUserId => _auth.currentUser?.uid ?? '';
 
@@ -161,7 +162,9 @@ class CallService {
                   final signalData = jsonDecode(encrypted) as Map<String, dynamic>;
                   signalData['message_id'] = item['id'];
                   handleIncomingCallSignal(signalData);
-                  SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
+                  if (signalData['status'] == 'ended' || signalData['status'] == 'rejected') {
+                    SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
+                  }
                 } catch (_) {}
               }
             }
@@ -194,6 +197,9 @@ class CallService {
   void handleIncomingCallSignal(Map<String, dynamic> data) async {
     final callId = (data['call_id'] ?? data['id'] ?? data['doc_id'] ?? '').toString();
     if (callId.isEmpty) return;
+
+    // Cache call payload in memory
+    _cachedCallData[callId] = data;
 
     final status = (data['status'] ?? 'ringing').toString();
     var callerName = (data['caller_name'] ?? '').toString();
@@ -288,7 +294,9 @@ class CallService {
           final signalData = jsonDecode(encrypted) as Map<String, dynamic>;
           signalData['message_id'] = item['id'];
           handleIncomingCallSignal(signalData);
-          SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
+          if (signalData['status'] == 'ended' || signalData['status'] == 'rejected') {
+            SupabaseConfig.client.from('messages').delete().eq('id', item['id']).then((_) {}).catchError((_) {});
+          }
         } catch (_) {}
       }
     } catch (_) {}
@@ -342,6 +350,8 @@ class CallService {
       'sdp_offer': offer?.toMap(),
       'created_at': DateTime.now().toIso8601String(),
     };
+
+    _cachedCallData[callId] = callPayload;
 
     // 2. Post signal to Supabase messages relay (INSTANT)
     try {
@@ -426,8 +436,8 @@ class CallService {
     return controller.stream;
   }
 
-  /// Answer incoming call
-  Future<void> answerCall(String callId) async {
+  /// Answer incoming call with memory cache fallback
+  Future<void> answerCall(String callId, {String? callerId, Map<String, dynamic>? sdpOffer}) async {
     _activeRingingCallIds.remove(callId);
     await _notificationService.cancelCallNotification(callId.hashCode);
 
@@ -435,41 +445,49 @@ class CallService {
     _hasRemoteDescription = false;
 
     try {
-      // 1. Fetch Call Doc
-      Map<String, dynamic>? data;
-      try {
-        final res = await SupabaseConfig.client
-            .from('messages')
-            .select()
-            .eq('group_id', 'CALL_$callId')
-            .order('created_at', ascending: false)
-            .limit(1);
-        if (res.isNotEmpty) {
-          final enc = res.first['encrypted_content'] as String? ?? '';
-          data = jsonDecode(enc) as Map<String, dynamic>;
-        }
-      } catch (_) {}
+      final cached = _cachedCallData[callId];
 
-      if (data == null) {
-        final doc = await _firestore.collection('call_signals').doc(callId).get();
-        data = doc.data();
+      final effectiveCallerId = (callerId != null && callerId.isNotEmpty)
+          ? callerId
+          : (cached?['caller_id'] ?? '').toString();
+
+      var effectiveOfferMap = sdpOffer ?? (cached?['sdp_offer'] as Map<String, dynamic>?);
+      final isVideo = cached?['is_video'] == true;
+
+      // 1. Fallback fetch from Supabase if not in memory
+      if (effectiveOfferMap == null) {
+        try {
+          final res = await SupabaseConfig.client
+              .from('messages')
+              .select()
+              .eq('group_id', 'CALL_$callId')
+              .order('created_at', ascending: false)
+              .limit(1);
+          if (res.isNotEmpty) {
+            final enc = res.first['encrypted_content'] as String? ?? '';
+            final data = jsonDecode(enc) as Map<String, dynamic>;
+            effectiveOfferMap ??= data['sdp_offer'] as Map<String, dynamic>?;
+          }
+        } catch (_) {}
       }
 
-      final isVideo = data?['is_video'] == true;
-      final offerMap = data?['sdp_offer'] as Map<String, dynamic>?;
-      final callerId = (data?['caller_id'] ?? '').toString();
+      // 2. Fallback fetch from Firestore
+      if (effectiveOfferMap == null) {
+        final doc = await _firestore.collection('call_signals').doc(callId).get();
+        effectiveOfferMap = doc.data()?['sdp_offer'] as Map<String, dynamic>?;
+      }
 
-      // 2. Initialize WebRTC
-      await _initWebRTC(isVideo: isVideo, isCaller: false, callId: callId, otherUid: callerId);
+      // 3. Initialize WebRTC
+      await _initWebRTC(isVideo: isVideo, isCaller: false, callId: callId, otherUid: effectiveCallerId);
 
-      // 3. Set Remote Description
-      if (offerMap != null) {
-        final offer = RTCSessionDescription(offerMap['sdp'], offerMap['type']);
+      // 4. Set Remote Description
+      if (effectiveOfferMap != null) {
+        final offer = RTCSessionDescription(effectiveOfferMap['sdp'], effectiveOfferMap['type']);
         await _peerConnection?.setRemoteDescription(offer);
         await _flushQueuedIceCandidates();
       }
 
-      // 4. Create Answer SDP
+      // 5. Create Answer SDP
       final answer = await _peerConnection?.createAnswer({
         'mandatory': {
           'OfferToReceiveAudio': true,
@@ -489,12 +507,14 @@ class CallService {
         'connected_at': DateTime.now().toIso8601String(),
       };
 
-      // 5. Post connected event to Supabase
-      if (callerId.isNotEmpty) {
+      _cachedCallData[callId] = answerPayload;
+
+      // 6. Post connected event to Supabase
+      if (effectiveCallerId.isNotEmpty) {
         try {
           await SupabaseConfig.client.from('messages').insert({
             'sender_id': currentUserId,
-            'recipient_id': callerId,
+            'recipient_id': effectiveCallerId,
             'group_id': 'CALL_$callId',
             'message_type': 'call_signal',
             'encrypted_content': jsonEncode(answerPayload),
@@ -503,7 +523,7 @@ class CallService {
         } catch (_) {}
       }
 
-      // 6. Post connected event to Firestore
+      // 7. Post connected event to Firestore
       try {
         await _firestore.collection('call_signals').doc(callId).set(answerPayload, SetOptions(merge: true));
       } catch (_) {}
@@ -693,6 +713,18 @@ class CallService {
       _peerConnection?.onTrack = (event) {
         if (event.streams.isNotEmpty) {
           _remoteStream = event.streams[0];
+        }
+      };
+
+      _peerConnection?.onConnectionState = (state) {
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+          _callEventsController.add({'call_id': callId, 'status': 'connected'});
+        }
+      };
+
+      _peerConnection?.onIceConnectionState = (state) {
+        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
+          _callEventsController.add({'call_id': callId, 'status': 'connected'});
         }
       };
 

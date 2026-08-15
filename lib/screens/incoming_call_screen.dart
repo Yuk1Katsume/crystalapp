@@ -101,7 +101,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTick
   Future<void> _answerCall() async {
     await _ringtonePlayer.stop();
     await CallNotificationService().cancelCallNotification(widget.callId.hashCode);
-    await _callService.answerCall(widget.callId);
+    await _callService.answerCall(widget.callId, callerId: widget.callerId);
 
     if (mounted) {
       Navigator.pushReplacement(
