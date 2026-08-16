@@ -2078,22 +2078,47 @@ class _LastMessagePreviewState extends State<_LastMessagePreview> {
           preview = text.length > 45 ? '${text.substring(0, 45)}...' : text;
         }
 
+        final status = msg['status'] as String? ?? (isRead ? 'read' : 'sent');
+
+        Widget statusIcon;
+        if (isRead || status == 'read') {
+          statusIcon = const Icon(
+            Icons.done_all_rounded,
+            size: 15,
+            color: Color(0xFFFF1744), // Read: double pink/blue tick
+          );
+        } else if (status == 'delivered') {
+          statusIcon = const Icon(
+            Icons.done_all_rounded,
+            size: 15,
+            color: Colors.white60, // Delivered: double gray/white tick
+          );
+        } else if (status == 'sent') {
+          statusIcon = const Icon(
+            Icons.done_rounded,
+            size: 15,
+            color: Colors.white38, // Sent: single tick
+          );
+        } else {
+          statusIcon = const Icon(
+            Icons.access_time_rounded,
+            size: 13,
+            color: Colors.white38, // Pending: clock
+          );
+        }
+
         return Row(
           children: [
             if (isSentByMe) ...[
-              Icon(
-                isRead ? Icons.done_all_rounded : Icons.done_rounded,
-                size: 15,
-                color: isRead ? const Color(0xFFFF1744) : Colors.white38,
-              ),
+              statusIcon,
               const SizedBox(width: 4),
             ],
             Expanded(
               child: Text(
                 preview,
                 style: TextStyle(
-                  color: isRead ? Colors.white38 : Colors.white,
-                  fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
+                  color: isRead || isSentByMe ? Colors.white38 : Colors.white,
+                  fontWeight: isRead || isSentByMe ? FontWeight.normal : FontWeight.bold,
                   fontSize: 13,
                 ),
                 maxLines: 1,

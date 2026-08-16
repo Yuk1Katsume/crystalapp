@@ -418,6 +418,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     await LocalDatabaseService().markMessagesAsRead(chatId);
     if (!isGroup && widget.recipientId != null && widget.recipientId!.isNotEmpty) {
       await LocalDatabaseService().markMessagesAsRead(widget.recipientId!);
+      // Inform the sender's app immediately that messages have been read (2 ticks -> 2 blue ticks)
+      _chatService.sendReadReceipt(widget.recipientId!, chatId);
     }
   }
 

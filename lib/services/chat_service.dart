@@ -58,6 +58,36 @@ class ChatService {
               continue;
             }
 
+            if (messageType == 'delivery_receipt') {
+              try {
+                final receipt = jsonDecode(encryptedContent) as Map<String, dynamic>;
+                final targetMsgId = receipt['msg_id'] as String?;
+                if (targetMsgId != null && targetMsgId.isNotEmpty) {
+                  await _localDb.updateMessageStatus(targetMsgId, 'delivered');
+                  if (!_incomingMessagesNotification.isClosed) _incomingMessagesNotification.add(null);
+                }
+                await _supabase.from('messages').delete().eq('id', item['id']);
+              } catch (_) {}
+              continue;
+            }
+
+            if (messageType == 'read_receipt') {
+              try {
+                final receipt = jsonDecode(encryptedContent) as Map<String, dynamic>;
+                final convId = receipt['chat_id'] as String?;
+                final targetMsgId = receipt['msg_id'] as String?;
+                if (targetMsgId != null && targetMsgId.isNotEmpty) {
+                  await _localDb.updateMessageStatus(targetMsgId, 'read');
+                  await _localDb.markSingleMessageAsRead(targetMsgId);
+                } else if (convId != null && convId.isNotEmpty) {
+                  await _localDb.markMessagesAsRead(convId);
+                }
+                if (!_incomingMessagesNotification.isClosed) _incomingMessagesNotification.add(null);
+                await _supabase.from('messages').delete().eq('id', item['id']);
+              } catch (_) {}
+              continue;
+            }
+
             if (messageType == 'status_story') {
               // Status stories are not personal chat messages
               continue;
@@ -130,6 +160,9 @@ class ChatService {
               chatId: chatId,
               isGroup: false,
             );
+
+            // Send delivery receipt back to the sender so their 1 tick becomes 2 ticks!
+            acknowledgeDelivery(senderId, msgId, chatId);
 
             // Delete consumed message from Supabase relay
             try {
@@ -403,10 +436,52 @@ class ChatService {
 
     try {
       await _supabase.from('messages').insert(payload);
+      // Stays as 'sent' (1 single tick) until receiver's device responds with delivery_receipt!
       await _localDb.updateMessageStatus(msgId, 'sent');
     } catch (_) {
-      // If offline/error, remains pending
+      // If offline/error, remains pending (clock icon)
     }
+  }
+
+  /// Sends a delivery receipt to the sender (1 tick -> 2 ticks)
+  Future<void> acknowledgeDelivery(String originalSenderId, String messageId, String chatId) async {
+    if (originalSenderId.isEmpty || originalSenderId == currentUserId) return;
+    try {
+      final receiptPayload = jsonEncode({
+        'msg_id': messageId,
+        'chat_id': chatId,
+        'reader_id': currentUserId,
+      });
+
+      await _supabase.from('messages').insert({
+        'sender_id': currentUserId,
+        'recipient_id': originalSenderId,
+        'group_id': chatId,
+        'message_type': 'delivery_receipt',
+        'encrypted_content': receiptPayload,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
+  }
+
+  /// Sends a read receipt to the sender (2 ticks -> 2 blue ticks)
+  Future<void> sendReadReceipt(String otherUserId, String chatId) async {
+    if (otherUserId.isEmpty || otherUserId == currentUserId) return;
+    try {
+      final receiptPayload = jsonEncode({
+        'chat_id': chatId,
+        'reader_id': currentUserId,
+      });
+
+      await _supabase.from('messages').insert({
+        'sender_id': currentUserId,
+        'recipient_id': otherUserId,
+        'group_id': chatId,
+        'message_type': 'read_receipt',
+        'encrypted_content': receiptPayload,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
   }
 
   /// Generates unique direct chat conversation ID
