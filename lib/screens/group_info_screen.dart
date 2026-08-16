@@ -868,6 +868,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                                       ],
                                     ],
                                   ),
+
                                   subtitle: Text(
                                     username.isNotEmpty ? '@$username' : '',
                                     style: const TextStyle(color: Colors.white54, fontSize: 12),
