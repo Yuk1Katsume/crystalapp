@@ -968,68 +968,295 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
     final uid = member['id']?.toString() ?? '';
     final myUid = _authService.currentUser?.uid ?? '';
     final isMeAdmin = _adminId == myUid;
+    final avatarUrl = member['avatar_url']?.toString();
+    final phone = member['phone']?.toString() ?? '';
+    final username = member['username']?.toString() ?? '';
+    final bio = member['bio']?.toString() ?? '';
+    final isAdmin = uid == _adminId;
+    final isOnline = member['is_online'] == true;
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1E1E1E),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white),
-              title: Text('Enviar mensaje directo a $name', style: const TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(recipientId: uid, recipientName: name),
-                  ),
-                );
-              },
-            ),
-            if (isMeAdmin && uid != myUid)
-              ListTile(
-                leading: const Icon(Icons.person_remove_rounded, color: Color(0xFFFF1744)),
-                title: Text('Eliminar a $name del grupo', style: const TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold)),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (dCtx) => AlertDialog(
-                      backgroundColor: const Color(0xFF1E1E1E),
-                      title: Text('Eliminar a $name', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      content: Text('¿Deseas eliminar a $name de este grupo?', style: const TextStyle(color: Colors.white70)),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(dCtx, false),
-                          child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF121212),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 4),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+
+              // ── Avatar + Name section ──
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 14, 24, 4),
+                child: Column(
+                  children: [
+                    // Avatar with gradient ring + online dot
+                    Stack(
+                      alignment: Alignment.bottomRight,
+                      children: [
+                        Container(
+                          width: 88,
+                          height: 88,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFF1744), Color(0xFFFF6D00)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            boxShadow: [BoxShadow(color: const Color(0xFFFF1744).withOpacity(0.3), blurRadius: 16, spreadRadius: 2)],
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(3),
+                            child: CircleAvatar(
+                              radius: 41,
+                              backgroundColor: const Color(0xFF1C1C1C),
+                              backgroundImage: (avatarUrl != null && avatarUrl.startsWith('http')) ? NetworkImage(avatarUrl) : null,
+                              child: (avatarUrl == null || !avatarUrl.startsWith('http'))
+                                  ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 34))
+                                  : null,
+                            ),
+                          ),
                         ),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
-                          onPressed: () => Navigator.pop(dCtx, true),
-                          child: const Text('Eliminar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        if (isOnline)
+                          Container(
+                            width: 18, height: 18,
+                            decoration: BoxDecoration(
+                              color: Colors.greenAccent,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFF121212), width: 2.5),
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // Name + Admin badge
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: Text(name, textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                        ),
+                        if (isAdmin) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.deepPurpleAccent.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.4)),
+                            ),
+                            child: const Text('Admin', style: TextStyle(color: Colors.deepPurpleAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ],
+                    ),
+
+                    if (phone.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(phone, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                    ],
+                    if (username.isNotEmpty) ...[
+                      const SizedBox(height: 1),
+                      Text('@$username', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                    ],
+                    if (bio.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text('"$bio"', textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white60, fontSize: 12, fontStyle: FontStyle.italic)),
+                    ],
+
+                    const SizedBox(height: 20),
+
+                    // ── 3 Action Buttons ──
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildMemberActionBtn(
+                          icon: Icons.chat_rounded, label: 'Mensaje',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            Navigator.push(context, MaterialPageRoute(
+                              builder: (_) => ChatScreen(recipientId: uid, recipientName: name),
+                            ));
+                          },
+                        ),
+                        _buildMemberActionBtn(
+                          icon: Icons.call_rounded, label: 'Llamar',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(backgroundColor: Color(0xFF1E1E1E),
+                                  content: Text('📞 Llamada E2EE iniciando...', style: TextStyle(color: Colors.white))));
+                          },
+                        ),
+                        _buildMemberActionBtn(
+                          icon: Icons.videocam_rounded, label: 'Video',
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(backgroundColor: Color(0xFF1E1E1E),
+                                  content: Text('🎥 Videollamada próximamente', style: TextStyle(color: Colors.white))));
+                          },
                         ),
                       ],
                     ),
-                  );
+                  ],
+                ),
+              ),
 
-                  if (confirmed == true) {
-                    final ok = await _groupService.removeMemberFromGroup(widget.groupId, uid);
-                    // Do NOT manually update _memberIds/_membersData here — the
-                    // Firestore stream (_firestoreSub) will push the update instantly
-                    // and avoid race conditions / double-refresh.
-                    if (ok && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('$name fue eliminado del grupo'), backgroundColor: const Color(0xFF1E1E1E)),
-                      );
-                    }
-                  }
+              const Divider(color: Colors.white10, height: 1, thickness: 1),
+
+              // ── Options ──
+              _buildMemberOptionTile(
+                icon: Icons.info_outline_rounded, label: 'Info.',
+                onTap: () => Navigator.pop(ctx),
+              ),
+              _buildMemberOptionTile(
+                icon: Icons.verified_user_outlined, label: 'Verificar código de seguridad',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(backgroundColor: Color(0xFF1E1E1E),
+                        content: Text('🔐 Verificación E2EE próximamente', style: TextStyle(color: Colors.white))));
                 },
               ),
-            const SizedBox(height: 12),
+
+              if (isMeAdmin && uid != myUid) ...[
+                _buildMemberOptionTile(
+                  icon: Icons.admin_panel_settings_outlined,
+                  label: isAdmin ? 'Quitar como admin del grupo' : 'Designar como admin del grupo',
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (dCtx) => AlertDialog(
+                        backgroundColor: const Color(0xFF1E1E1E),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        title: const Text('Designar admin', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        content: Text('¿Quieres que $name sea el nuevo administrador?', style: const TextStyle(color: Colors.white70)),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent),
+                            onPressed: () => Navigator.pop(dCtx, true),
+                            child: const Text('Designar', style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed == true && mounted) {
+                      try {
+                        await FirebaseFirestore.instance.collection('groups').doc(widget.groupId).update({'adminId': uid});
+                        setState(() => _adminId = uid);
+                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('$name es ahora el administrador 👑'), backgroundColor: const Color(0xFF1E1E1E)));
+                      } catch (_) {}
+                    }
+                  },
+                ),
+                _buildMemberOptionTile(
+                  icon: Icons.person_remove_rounded,
+                  label: 'Quitar del grupo',
+                  isDestructive: true,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (dCtx) => AlertDialog(
+                        backgroundColor: const Color(0xFF1E1E1E),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        title: Text('Quitar a $name', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        content: Text('¿Eliminar a $name del grupo? Podrás añadirlo de nuevo después.', style: const TextStyle(color: Colors.white70)),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF1744)),
+                            onPressed: () => Navigator.pop(dCtx, true),
+                            child: const Text('Quitar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (confirmed == true && mounted) {
+                      // 1. Optimistic UI: quitar de la lista local inmediatamente
+                      setState(() {
+                        _memberIds.remove(uid);
+                        _membersData.removeWhere((m) => m['id']?.toString() == uid);
+                      });
+
+                      // 2. Ejecutar en backend
+                      final ok = await _groupService.removeMemberFromGroup(widget.groupId, uid);
+
+                      if (mounted) {
+                        if (ok) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('$name fue quitado del grupo ✓'), backgroundColor: const Color(0xFF1E1E1E)));
+                        } else {
+                          // 3. Si falla, revertir y mostrar error
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Error al quitar al miembro. Comprueba la conexión.'), backgroundColor: Colors.redAccent));
+                          _loadGroupDetails(); // recargar estado real
+                        }
+                      }
+                    }
+                  },
+                ),
+              ],
+
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMemberActionBtn({required IconData icon, required String label, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56, height: 56,
+            decoration: BoxDecoration(color: const Color(0xFF1E2428), shape: BoxShape.circle, border: Border.all(color: Colors.white10)),
+            child: Icon(icon, color: Colors.white70, size: 24),
+          ),
+          const SizedBox(height: 6),
+          Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemberOptionTile({required IconData icon, required String label, required VoidCallback onTap, bool isDestructive = false}) {
+    final color = isDestructive ? const Color(0xFFFF1744) : Colors.white70;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(width: 18),
+            Text(label, style: TextStyle(color: color, fontSize: 15)),
           ],
         ),
       ),
@@ -1045,16 +1272,14 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
           children: [
             const Icon(Icons.group_rounded, size: 72, color: Colors.deepPurpleAccent),
             const SizedBox(height: 8),
-            Text(
-              _groupName,
-              style: const TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+            Text(_groupName, style: const TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
     );
   }
 }
+
 
 class _AddMembersBottomSheet extends StatefulWidget {
   final List<String> currentMemberIds;
