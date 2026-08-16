@@ -10,6 +10,7 @@ import '../models/message_model.dart';
 import 'call_service.dart';
 import 'e2ee_service.dart';
 import 'local_database_service.dart';
+import 'message_notification_service.dart';
 import 'supabase_config.dart';
 import 'voice_note_service.dart';
 
@@ -119,6 +120,15 @@ class ChatService {
               createdAt: DateTime.tryParse(item['created_at']?.toString() ?? '') ?? DateTime.now(),
               isRead: false,
               status: 'delivered',
+            );
+
+            // Trigger WhatsApp-styled notification
+            MessageNotificationService().showIncomingMessageNotification(
+              senderId: senderId,
+              senderName: senderName ?? 'Contacto',
+              messageText: decryptedText,
+              chatId: chatId,
+              isGroup: false,
             );
 
             // Delete consumed message from Supabase relay

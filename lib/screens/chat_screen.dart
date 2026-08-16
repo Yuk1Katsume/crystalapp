@@ -25,6 +25,7 @@ import '../widgets/voice_message_bubble.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/voice_note_service.dart';
+import '../services/message_notification_service.dart';
 
 class Sticker {
   final String id;
@@ -382,6 +383,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _currentTitle = isGroup ? (widget.groupName ?? 'Grupo') : (widget.recipientName ?? 'Chat Directo');
+    final chatId = isGroup ? widget.groupId! : _chatService.getChatId(_chatService.currentUserId, widget.recipientId ?? '');
+    MessageNotificationService().activeChatId = chatId;
+    MessageNotificationService().cancelNotification(chatId);
     _messageController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -396,6 +400,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
+    MessageNotificationService().activeChatId = null;
     _presenceSub?.cancel();
     _groupMetaSub?.cancel();
     _firestoreGroupSub?.cancel();

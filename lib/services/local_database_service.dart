@@ -160,7 +160,7 @@ class LocalDatabaseService {
     int? audioDurationSeconds,
     String? audioWaveform,
     required DateTime createdAt,
-    bool isRead = true,
+    bool isRead = false,
     bool isStarred = false,
     String status = 'sent',
   }) async {
@@ -352,7 +352,7 @@ class LocalDatabaseService {
       mediaUrl: item['media_url'] as String?,
       audioDurationSeconds: item['audio_duration'] as int?,
       audioWaveform: item['audio_waveform'] as String?,
-      isRead: (item['is_read'] as int? ?? 1) == 1,
+      isRead: (item['is_read'] as int? ?? 0) == 1,
       isStarred: (item['is_starred'] as int? ?? 0) == 1,
       status: status,
     );

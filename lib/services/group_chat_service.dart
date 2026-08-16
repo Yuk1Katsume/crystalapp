@@ -11,6 +11,7 @@ import '../models/message_model.dart';
 import 'chat_service.dart';
 import 'e2ee_service.dart';
 import 'local_database_service.dart';
+import 'message_notification_service.dart';
 import 'supabase_config.dart';
 import 'voice_note_service.dart';
 
@@ -1077,6 +1078,17 @@ class GroupChatService {
               isRead: false,
               status: 'delivered',
             );
+
+            // Group notification (skip system notifications from noise)
+            if (messageType != 'system') {
+              MessageNotificationService().showIncomingMessageNotification(
+                senderId: senderId,
+                senderName: senderName ?? 'Miembro',
+                messageText: decryptedText,
+                chatId: groupId,
+                isGroup: true,
+              );
+            }
 
             // Always delete the targeted row once processed
             try {
