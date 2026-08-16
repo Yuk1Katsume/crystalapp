@@ -129,11 +129,13 @@ class GroupModel {
   final String? description;
   final String? iconUrl;
   final List<String> memberIds;
-  final String adminId;
+  final List<String> adminIds;
   final DateTime createdAt;
   final String? wallpaperColor;
   final String? wallpaperImage;
   final double? wallpaperOpacity;
+
+  String get adminId => adminIds.isNotEmpty ? adminIds.first : '';
 
   GroupModel({
     required this.id,
@@ -141,12 +143,13 @@ class GroupModel {
     this.description,
     this.iconUrl,
     required this.memberIds,
-    required this.adminId,
+    List<String>? adminIds,
+    String? adminId,
     required this.createdAt,
     this.wallpaperColor,
     this.wallpaperImage,
     this.wallpaperOpacity,
-  });
+  }) : adminIds = adminIds ?? (adminId != null && adminId.isNotEmpty ? [adminId] : []);
 
   Map<String, dynamic> toJson() {
     return {
@@ -155,6 +158,7 @@ class GroupModel {
       'description': description,
       'iconUrl': iconUrl,
       'memberIds': memberIds,
+      'adminIds': adminIds,
       'adminId': adminId,
       'createdAt': createdAt.toIso8601String(),
       'wallpaperColor': wallpaperColor,
@@ -164,13 +168,25 @@ class GroupModel {
   }
 
   factory GroupModel.fromJson(Map<String, dynamic> json) {
+    List<String> resolvedAdmins = [];
+    if (json['adminIds'] != null) {
+      resolvedAdmins = List<String>.from(json['adminIds']);
+    } else if (json['admin_ids'] != null) {
+      resolvedAdmins = List<String>.from(json['admin_ids']);
+    } else {
+      final singleAdmin = (json['adminId'] ?? json['admin_id']) as String? ?? '';
+      if (singleAdmin.isNotEmpty) {
+        resolvedAdmins = [singleAdmin];
+      }
+    }
+
     return GroupModel(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? 'Group',
       description: json['description'] as String?,
       iconUrl: (json['iconUrl'] ?? json['icon_url']) as String?,
       memberIds: List<String>.from(json['memberIds'] ?? json['member_ids'] ?? []),
-      adminId: (json['adminId'] ?? json['admin_id']) as String? ?? '',
+      adminIds: resolvedAdmins,
       createdAt: json['createdAt'] != null
           ? DateTime.tryParse(json['createdAt'].toString()) ?? DateTime.now()
           : (json['created_at'] != null

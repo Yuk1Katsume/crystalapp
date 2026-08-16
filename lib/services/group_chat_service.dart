@@ -41,7 +41,7 @@ class GroupChatService {
         description: description,
         iconUrl: iconUrl,
         memberIds: allMembers,
-        adminId: currentUid,
+        adminIds: [currentUid],
         createdAt: DateTime.now(),
       );
 
@@ -71,7 +71,7 @@ class GroupChatService {
         description: description,
         iconUrl: iconUrl,
         memberIds: memberIds,
-        adminId: currentUid,
+        adminIds: [currentUid],
         createdAt: DateTime.now(),
       );
     }
@@ -233,6 +233,7 @@ class GroupChatService {
       if (group == null) return false;
 
       final updatedMembers = List<String>.from(group.memberIds)..remove(memberId);
+      final updatedAdmins = List<String>.from(group.adminIds)..remove(memberId);
 
       // If no members remain, delete the group entirely
       if (updatedMembers.isEmpty) {
@@ -244,7 +245,7 @@ class GroupChatService {
           description: group.description,
           iconUrl: group.iconUrl,
           memberIds: [],
-          adminId: '',
+          adminIds: [],
           createdAt: group.createdAt,
         );
         SupabaseConfig.client.from('messages').insert({
@@ -258,17 +259,17 @@ class GroupChatService {
         return true;
       }
 
-      // If the admin is leaving or removed, randomly pick another member to be the new admin
-      String newAdminId = group.adminId;
+      // If there are no admins left, pick a remaining member as admin
       String? newAdminName;
-      if (group.adminId == memberId) {
+      if (updatedAdmins.isEmpty && updatedMembers.isNotEmpty) {
         final listCopy = List<String>.from(updatedMembers)..shuffle();
-        newAdminId = listCopy.first;
+        final pickedAdmin = listCopy.first;
+        updatedAdmins.add(pickedAdmin);
         try {
           final newAdminRow = await SupabaseConfig.client
               .from('users')
               .select('display_name, username')
-              .eq('id', newAdminId)
+              .eq('id', pickedAdmin)
               .maybeSingle();
           if (newAdminRow != null) {
             newAdminName = newAdminRow['display_name'] ?? newAdminRow['username'];
@@ -276,11 +277,12 @@ class GroupChatService {
         } catch (_) {}
       }
 
-      // 1. Update Firestore
-      await _firestore.collection('groups').doc(groupId).update({
+      // 1. Update Firestore (non-blocking catchError so slow Firestore never fails the operation)
+      _firestore.collection('groups').doc(groupId).update({
         'memberIds': updatedMembers,
-        'adminId': newAdminId,
-      }).timeout(const Duration(seconds: 4));
+        'adminIds': updatedAdmins,
+        'adminId': updatedAdmins.isNotEmpty ? updatedAdmins.first : '',
+      }).timeout(const Duration(seconds: 4)).catchError((_) {});
 
       // 2. Broadcast updated group to Supabase
       final updatedGroup = GroupModel(
@@ -289,7 +291,7 @@ class GroupChatService {
         description: group.description,
         iconUrl: group.iconUrl,
         memberIds: updatedMembers,
-        adminId: newAdminId,
+        adminIds: updatedAdmins,
         createdAt: group.createdAt,
         wallpaperColor: group.wallpaperColor,
         wallpaperImage: group.wallpaperImage,
@@ -343,12 +345,12 @@ class GroupChatService {
           memberIds: sysRecipients,
         );
 
-        // If admin changed, notify the group chat
-        if (newAdminId != group.adminId) {
+        // If a new admin was automatically chosen
+        if (newAdminName != null && updatedAdmins.isNotEmpty) {
           final adminSysText = jsonEncode({
             'action': 'admin_assigned',
-            'actor_id': newAdminId,
-            'actor_name': newAdminName ?? 'Un miembro',
+            'actor_id': updatedAdmins.first,
+            'actor_name': newAdminName,
           });
           await sendGroupSystemMessage(
             groupId: groupId,
@@ -397,9 +399,9 @@ class GroupChatService {
       final updatedMembers = {...group.memberIds, ...newMemberIds}.toList();
 
       // 1. Update Firestore
-      await _firestore.collection('groups').doc(groupId).update({
+      _firestore.collection('groups').doc(groupId).update({
         'memberIds': updatedMembers,
-      }).timeout(const Duration(seconds: 4));
+      }).timeout(const Duration(seconds: 4)).catchError((_) {});
 
       // 2. Broadcast to Supabase
       final updatedGroup = GroupModel(
@@ -408,7 +410,7 @@ class GroupChatService {
         description: group.description,
         iconUrl: group.iconUrl,
         memberIds: updatedMembers,
-        adminId: group.adminId,
+        adminIds: group.adminIds,
         createdAt: group.createdAt,
       );
 
@@ -457,6 +459,110 @@ class GroupChatService {
             memberIds: updatedMembers,
           );
         }
+      } catch (_) {}
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Toggle admin status for a member (make admin or remove admin)
+  Future<bool> setMemberAdminStatus(String groupId, String memberId, bool makeAdmin) async {
+    try {
+      final currentUid = _auth.currentUser?.uid ?? '';
+      GroupModel? group = await getGroupDetails(groupId);
+
+      if (group == null) {
+        try {
+          final rows = await SupabaseConfig.client
+              .from('messages')
+              .select('encrypted_content')
+              .eq('group_id', 'GLOBAL_GROUPS')
+              .eq('message_type', 'group_metadata')
+              .order('created_at', ascending: false)
+              .limit(30);
+          for (final row in rows) {
+            try {
+              final map = jsonDecode(row['encrypted_content'] as String? ?? '') as Map<String, dynamic>;
+              if (map['id'] == groupId) {
+                group = GroupModel.fromJson(map);
+                break;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      if (group == null) return false;
+
+      final updatedAdmins = Set<String>.from(group.adminIds);
+      if (makeAdmin) {
+        updatedAdmins.add(memberId);
+      } else {
+        updatedAdmins.remove(memberId);
+        // Guarantee at least one admin remains
+        if (updatedAdmins.isEmpty) {
+          updatedAdmins.add(currentUid.isNotEmpty ? currentUid : group.memberIds.first);
+        }
+      }
+
+      final adminList = updatedAdmins.toList();
+
+      // 1. Update Firestore non-blocking
+      _firestore.collection('groups').doc(groupId).update({
+        'adminIds': adminList,
+        'adminId': adminList.isNotEmpty ? adminList.first : '',
+      }).timeout(const Duration(seconds: 4)).catchError((_) {});
+
+      // 2. Broadcast to Supabase
+      final updatedGroup = GroupModel(
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        iconUrl: group.iconUrl,
+        memberIds: group.memberIds,
+        adminIds: adminList,
+        createdAt: group.createdAt,
+        wallpaperColor: group.wallpaperColor,
+        wallpaperImage: group.wallpaperImage,
+        wallpaperOpacity: group.wallpaperOpacity,
+      );
+
+      try {
+        await SupabaseConfig.client.from('messages').insert({
+          'sender_id': currentUid,
+          'recipient_id': 'ALL',
+          'group_id': 'GLOBAL_GROUPS',
+          'message_type': 'group_metadata',
+          'encrypted_content': jsonEncode(updatedGroup.toJson()),
+          'created_at': DateTime.now().toIso8601String(),
+        }).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+
+      // 3. System message
+      try {
+        String targetName = 'un miembro';
+        final userRow = await SupabaseConfig.client
+            .from('users')
+            .select('display_name, username')
+            .eq('id', memberId)
+            .maybeSingle();
+        if (userRow != null) {
+          targetName = userRow['display_name'] ?? userRow['username'] ?? targetName;
+        }
+
+        final sysText = jsonEncode({
+          'action': makeAdmin ? 'admin_assigned' : 'admin_removed',
+          'actor_id': memberId,
+          'actor_name': targetName,
+        });
+
+        await sendGroupSystemMessage(
+          groupId: groupId,
+          systemText: sysText,
+          memberIds: group.memberIds,
+        );
       } catch (_) {}
 
       return true;

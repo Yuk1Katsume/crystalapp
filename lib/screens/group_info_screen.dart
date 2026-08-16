@@ -37,7 +37,8 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   String _groupName = '';
   String? _groupDescription;
   String? _groupIconUrl;
-  String _adminId = '';
+  List<String> _adminIds = [];
+  String get _adminId => _adminIds.isNotEmpty ? _adminIds.first : '';
   List<String> _memberIds = [];
   List<Map<String, dynamic>> _membersData = [];
 
@@ -81,7 +82,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                     _groupName = updated.name;
                     _groupDescription = updated.description;
                     _groupIconUrl = updated.iconUrl;
-                    _adminId = updated.adminId;
+                    _adminIds = updated.adminIds;
                     _memberIds = updated.memberIds;
                   });
                   _refreshMembersData(updated.memberIds);
@@ -111,7 +112,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                         _groupName = updated.name;
                         _groupDescription = updated.description;
                         _groupIconUrl = updated.iconUrl;
-                        _adminId = updated.adminId;
+                        _adminIds = updated.adminIds;
                         _memberIds = updated.memberIds;
                       });
                       _refreshMembersData(updated.memberIds);
@@ -170,7 +171,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
         _groupName = group.name;
         _groupDescription = group.description;
         _groupIconUrl = group.iconUrl;
-        _adminId = group.adminId;
+        _adminIds = group.adminIds;
         _memberIds = group.memberIds;
       }
 
@@ -805,25 +806,26 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                                 ),
                               ),
 
-                              // ADD MEMBERS BUTTON
-                              ListTile(
-                                leading: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFFFF1744),
-                                    shape: BoxShape.circle,
+                              // ADD MEMBERS BUTTON - ONLY visible to admins
+                              if (_adminIds.contains(currentUid)) ...[
+                                ListTile(
+                                  leading: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFFFF1744),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white, size: 20),
                                   ),
-                                  child: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white, size: 20),
+                                  title: const Text(
+                                    'Añadir participantes',
+                                    style: TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold, fontSize: 15),
+                                  ),
+                                  onTap: _openAddMembersModal,
                                 ),
-                                title: const Text(
-                                  'Añadir participantes',
-                                  style: TextStyle(color: Color(0xFFFF1744), fontWeight: FontWeight.bold, fontSize: 15),
-                                ),
-                                onTap: _openAddMembersModal,
-                              ),
-
-                              const Divider(color: Colors.white12, height: 1),
+                                const Divider(color: Colors.white12, height: 1),
+                              ],
 
                               ..._membersData.map((m) {
                                 final uid = m['id']?.toString() ?? '';
@@ -831,7 +833,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                                 final username = m['username'] ?? '';
                                 final avatarUrl = m['avatar_url']?.toString();
                                 final hasAvatar = avatarUrl != null && avatarUrl.startsWith('http');
-                                final isAdmin = uid == _adminId;
+                                final isAdmin = _adminIds.contains(uid);
                                 final isMe = uid == currentUid;
 
                                 return ListTile(
@@ -967,12 +969,12 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
     final name = member['resolved_name'] ?? member['display_name'] ?? member['username'] ?? 'Usuario';
     final uid = member['id']?.toString() ?? '';
     final myUid = _authService.currentUser?.uid ?? '';
-    final isMeAdmin = _adminId == myUid;
+    final isMeAdmin = _adminIds.contains(myUid);
     final avatarUrl = member['avatar_url']?.toString();
     final phone = member['phone']?.toString() ?? '';
     final username = member['username']?.toString() ?? '';
     final bio = member['bio']?.toString() ?? '';
-    final isAdmin = uid == _adminId;
+    final isAdmin = _adminIds.contains(uid);
     final isOnline = member['is_online'] == true;
 
     showModalBottomSheet(
@@ -1143,30 +1145,52 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                   label: isAdmin ? 'Quitar como admin del grupo' : 'Designar como admin del grupo',
                   onTap: () async {
                     Navigator.pop(ctx);
+                    final isPromoting = !isAdmin;
                     final confirmed = await showDialog<bool>(
                       context: context,
                       builder: (dCtx) => AlertDialog(
                         backgroundColor: const Color(0xFF1E1E1E),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        title: const Text('Designar admin', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        content: Text('¿Quieres que $name sea el nuevo administrador?', style: const TextStyle(color: Colors.white70)),
+                        title: Text(isPromoting ? 'Designar admin' : 'Quitar admin', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        content: Text(
+                          isPromoting
+                              ? '¿Quieres que $name sea administrador del grupo?'
+                              : '¿Quieres quitar los permisos de administrador a $name?',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
                         actions: [
                           TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancelar', style: TextStyle(color: Colors.white54))),
                           ElevatedButton(
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent),
                             onPressed: () => Navigator.pop(dCtx, true),
-                            child: const Text('Designar', style: TextStyle(color: Colors.white)),
+                            child: Text(isPromoting ? 'Designar' : 'Quitar', style: const TextStyle(color: Colors.white)),
                           ),
                         ],
                       ),
                     );
+
                     if (confirmed == true && mounted) {
-                      try {
-                        await FirebaseFirestore.instance.collection('groups').doc(widget.groupId).update({'adminId': uid});
-                        setState(() => _adminId = uid);
-                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('$name es ahora el administrador 👑'), backgroundColor: const Color(0xFF1E1E1E)));
-                      } catch (_) {}
+                      setState(() {
+                        if (isPromoting) {
+                          _adminIds.add(uid);
+                        } else {
+                          _adminIds.remove(uid);
+                        }
+                      });
+
+                      final ok = await _groupService.setMemberAdminStatus(widget.groupId, uid, isPromoting);
+                      if (mounted) {
+                        if (ok) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(isPromoting ? '$name es ahora administrador 👑' : 'Permisos de admin revocados a $name'),
+                              backgroundColor: const Color(0xFF1E1E1E),
+                            ),
+                          );
+                        } else {
+                          _loadGroupDetails();
+                        }
+                      }
                     }
                   },
                 ),
@@ -1198,10 +1222,11 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                       // 1. Optimistic UI: quitar de la lista local inmediatamente
                       setState(() {
                         _memberIds.remove(uid);
+                        _adminIds.remove(uid);
                         _membersData.removeWhere((m) => m['id']?.toString() == uid);
                       });
 
-                      // 2. Ejecutar en backend
+                      // 2. Ejecutar en backend (con fallback resiliente Supabase)
                       final ok = await _groupService.removeMemberFromGroup(widget.groupId, uid);
 
                       if (mounted) {
